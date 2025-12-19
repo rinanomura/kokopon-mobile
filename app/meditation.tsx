@@ -1,0 +1,343 @@
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  TouchableOpacity,
+  Dimensions,
+  Animated,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// 瞑想の長さ（秒）
+const MEDITATION_DURATION = 30;
+
+/**
+ * MeditationScreen - 瞑想実行画面（⑤）
+ *
+ * この画面はマインドフルネス体験の中核です。
+ *
+ * 思想的制約：
+ * - 評価しない（良い・悪い・成功・失敗を示さない）
+ * - 指示しすぎない（呼吸を数えさせない、リズムを強制しない）
+ * - 変えようとしない（今の状態のままでOK）
+ * - 操作を最小限にする
+ *
+ * ユーザーに「正しくやらせる」ことは目的ではありません。
+ * ただ30秒、今の状態と一緒にいられる体験を提供します。
+ */
+export default function MeditationScreen() {
+  // 経過時間（秒）
+  const [elapsed, setElapsed] = useState(0);
+
+  // 音声ガイドの状態
+  const [audioGuideActive, setAudioGuideActive] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false);
+
+  // フェードアウト用のアニメーション値
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  // タイマーの参照（クリーンアップ用）
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 音声オブジェクトの参照
+  const soundRef = useRef<Audio.Sound | null>(null);
+
+  /**
+   * 30秒タイマーの開始と終了処理
+   */
+  useEffect(() => {
+    // 1秒ごとに経過時間を更新
+    timerRef.current = setInterval(() => {
+      setElapsed(prev => {
+        const next = prev + 1;
+
+        // 30秒経過したら終了処理
+        if (next >= MEDITATION_DURATION) {
+          // タイマーをクリア
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+
+          // フェードアウトして次画面へ
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 800,
+            useNativeDriver: true,
+          }).start(() => {
+            // ⑥ After画面へ遷移（replaceで戻れないようにする）
+            router.replace('/after');
+          });
+        }
+
+        return next;
+      });
+    }, 1000);
+
+    // クリーンアップ（戻る操作やunmount時）
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      // 音声の停止とアンロード
+      if (soundRef.current) {
+        soundRef.current.stopAsync();
+        soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+    };
+  }, [fadeAnim]);
+
+  /**
+   * 戻るボタンのハンドラ
+   */
+  const handleBack = () => {
+    router.back();
+  };
+
+  /**
+   * 音声ガイドボタンのハンドラ
+   */
+  const handleAudioGuide = async () => {
+    // すでに再生中なら停止
+    if (audioGuideActive && soundRef.current) {
+      await soundRef.current.stopAsync();
+      await soundRef.current.unloadAsync();
+      soundRef.current = null;
+      setAudioGuideActive(false);
+      return;
+    }
+
+    try {
+      setAudioLoading(true);
+
+      // オーディオモードの設定
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
+
+      // 音声ファイルの読み込みと再生
+      const { sound } = await Audio.Sound.createAsync(
+        require('@/assets/sounds/breathing_30s_bird_guided.m4a'),
+        { shouldPlay: true, volume: 1.0 }
+      );
+
+      soundRef.current = sound;
+      setAudioGuideActive(true);
+      setAudioLoading(false);
+
+      // 再生終了時の処理
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setAudioGuideActive(false);
+          sound.unloadAsync();
+          soundRef.current = null;
+        }
+      });
+    } catch (error) {
+      console.log('音声ガイドの再生エラー:', error);
+      setAudioLoading(false);
+      setAudioGuideActive(false);
+    }
+  };
+
+  // プログレスの割合（0〜1）
+  const progress = elapsed / MEDITATION_DURATION;
+
+  return (
+    <LinearGradient
+      colors={['#7AD7F0', '#CDECF6']}
+      style={styles.gradient}
+    >
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+          {/* ヘッダー：戻るボタン */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              onPress={handleBack}
+              style={styles.backButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={24} color="#5A6B7C" />
+            </TouchableOpacity>
+          </View>
+
+          {/* メインコンテンツ */}
+          <View style={styles.mainContent}>
+            {/* タイトル */}
+            <Text style={styles.title}>
+              呼吸を感じる30秒
+            </Text>
+
+            {/* りなわんGIF */}
+            <View style={styles.mascotContainer}>
+              <Image
+                source={require('@/assets/images/rinawan_breathing_eye-closed.gif')}
+                style={styles.mascotImage}
+                resizeMode="contain"
+              />
+            </View>
+
+            {/* ガイド文 */}
+            <Text style={styles.guideText}>
+              今の呼吸の出入りを、そのまま感じてみよう。
+            </Text>
+
+            {/* プログレス表示（円形リング） */}
+            <View style={styles.progressContainer}>
+              <View style={styles.progressRing}>
+                {/* 背景リング */}
+                <View style={styles.progressBackground} />
+                {/* プログレスリング（SVGを使わずシンプルに表現） */}
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      // 擬似的なプログレス表現（横バー）
+                      width: `${progress * 100}%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* フッター：音声ガイドボタン */}
+          <View style={styles.footer}>
+            {audioLoading ? (
+              <Text style={styles.audioGuideHint}>
+                読み込み中...
+              </Text>
+            ) : (
+              <TouchableOpacity
+                onPress={handleAudioGuide}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.audioGuideButton}>
+                  {audioGuideActive ? '🔇 音声ガイドを止める' : '🔊 音声ガイドを使う'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Animated.View>
+      </SafeAreaView>
+    </LinearGradient>
+  );
+}
+
+const styles = StyleSheet.create({
+  gradient: {
+    flex: 1,
+  },
+  container: {
+    flex: 1,
+  },
+  content: {
+    flex: 1,
+  },
+
+  // ヘッダー
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // メインコンテンツ
+  mainContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+
+  // タイトル
+  title: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#4A5568',
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+
+  // りなわん
+  mascotContainer: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  mascotImage: {
+    width: SCREEN_WIDTH * 0.45,
+    height: SCREEN_WIDTH * 0.45,
+    maxWidth: 200,
+    maxHeight: 200,
+  },
+
+  // ガイド文
+  guideText: {
+    fontSize: 16,
+    color: '#4A5568',
+    textAlign: 'center',
+    lineHeight: 26,
+    fontWeight: '500',
+    marginBottom: 40,
+  },
+
+  // プログレス表示
+  progressContainer: {
+    width: '80%',
+    alignItems: 'center',
+  },
+  progressRing: {
+    width: '100%',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBackground: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: 'rgba(255, 133, 162, 0.8)', // ピンク系
+    borderRadius: 3,
+  },
+
+  // フッター
+  footer: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    alignItems: 'center',
+  },
+  audioGuideButton: {
+    fontSize: 14,
+    color: '#5A6B7C',
+    fontWeight: '500',
+  },
+  audioGuideHint: {
+    fontSize: 14,
+    color: '#A0AEC0',
+    fontWeight: '500',
+  },
+});
