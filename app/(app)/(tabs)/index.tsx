@@ -11,6 +11,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import EmotionWheel, { EmotionPoint, LabelMode } from '@/components/EmotionWheel';
+import FootprintsBlock from '@/components/FootprintsBlock';
+import { useFootprints } from '@/hooks/useFootprints';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -29,6 +31,8 @@ const WHEEL_SIZE = Math.min(SCREEN_WIDTH * 0.85, 340);
  * ユーザーは自分の状態にただ「気づく」だけです。
  */
 export default function HomeScreen() {
+  const { totalCount, startedAtISO, addFootprint } = useFootprints();
+
   // ラベル表示モード（0: ベースのみ, 1: +基本ラベル, 2: +詳細ラベル）
   // 初期値は0（ベースのみ）
   const [labelMode, setLabelMode] = useState<LabelMode>(0);
@@ -61,16 +65,12 @@ export default function HomeScreen() {
    * 「トレーニングへ進む」ボタンのハンドラ
    * beforePoint をログに出力し、次の画面へ遷移
    */
-  const handleRecord = useCallback(() => {
+  const handleRecord = useCallback(async () => {
     if (!beforePoint) {
-      console.log('感情がまだ選択されていません');
       return;
     }
 
-    console.log('=== 記録を開始 ===');
-    console.log('beforePoint:', beforePoint);
-    console.log('次の画面へ遷移します...');
-    console.log('==================');
+    await addFootprint();
 
     // ④ おすすめ画面へ遷移
     router.push({
@@ -82,7 +82,7 @@ export default function HomeScreen() {
         beforeTheta: beforePoint.theta.toString(),
       },
     });
-  }, [beforePoint]);
+  }, [beforePoint, addFootprint]);
 
   return (
     <LinearGradient
@@ -141,6 +141,12 @@ export default function HomeScreen() {
             labelMode={labelMode}
             onSelect={handleEmotionSelect}
             selectedPoint={beforePoint}
+          />
+
+          {/* 足あとブロック */}
+          <FootprintsBlock
+            totalCount={totalCount}
+            startedAtISO={startedAtISO}
           />
         </View>
 
