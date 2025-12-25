@@ -2,7 +2,8 @@ import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
 
 // GraphQL クライアント（遅延初期化）
-let _client: ReturnType<typeof generateClient> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _client: any = null;
 
 function getClient() {
   if (!_client) {
