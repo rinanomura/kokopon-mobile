@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,13 @@ import {
   Image,
   TouchableOpacity,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { getSessionLog, updateSessionLog, SessionLog } from '@/lib/api';
+import EmotionWheel, { EmotionPoint as WheelEmotionPoint } from '@/components/EmotionWheel';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -25,10 +28,8 @@ const AFTER_MARKER_SIZE = 18;
  * 感情円環上の座標を表す
  */
 interface EmotionPoint {
-  x: number;      // -1〜1
-  y: number;      // -1〜1
-  r: number;      // 0〜1
-  theta: number;  // ラジアン
+  x: number;      // -1〜1（valence）
+  y: number;      // -1〜1（arousal）
 }
 
 /**
@@ -44,21 +45,85 @@ interface EmotionPoint {
  * - 成果・改善・成功という言葉を使わない
  */
 export default function AfterScreen() {
-  // TODO: 将来的には Context や Zustand から取得
-  // 現在は仮のデータを使用
-  const beforePoint: EmotionPoint = {
-    x: -0.3,
-    y: -0.4,
-    r: 0.5,
-    theta: -2.2,
-  };
+  // sessionId を params から受け取る
+  const params = useLocalSearchParams<{
+    sessionId: string;
+  }>();
 
-  const afterPoint: EmotionPoint = {
-    x: 0.2,
-    y: -0.2,
-    r: 0.28,
-    theta: -0.78,
-  };
+  // SessionLog データ
+  const [session, setSession] = useState<SessionLog | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // after で選択した座標
+  const [selectedAfterPoint, setSelectedAfterPoint] = useState<WheelEmotionPoint | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  /**
+   * 画面表示時に SessionLog を取得
+   */
+  useEffect(() => {
+    const fetchSession = async () => {
+      if (!params.sessionId) {
+        console.error('sessionId がありません');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const result = await getSessionLog(params.sessionId);
+        console.log('=== SessionLog 取得成功 ===');
+        console.log(result);
+        setSession(result);
+      } catch (error) {
+        console.error('SessionLog 取得エラー:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSession();
+  }, [params.sessionId]);
+
+  /**
+   * 感情ホイールがタップされたときのハンドラ
+   */
+  const handleEmotionSelect = useCallback(async (point: WheelEmotionPoint) => {
+    console.log('=== afterPoint が選択されました ===');
+    console.log(`座標: (x: ${point.x}, y: ${point.y})`);
+
+    setSelectedAfterPoint(point);
+
+    // SessionLog を更新
+    if (session?.id) {
+      setSaving(true);
+      try {
+        const result = await updateSessionLog(session.id, point.x, point.y);
+        console.log('=== SessionLog 更新成功（after追加）===');
+        console.log(result);
+        setSession(result);
+      } catch (error) {
+        console.error('SessionLog 更新エラー:', error);
+      } finally {
+        setSaving(false);
+      }
+    }
+  }, [session?.id]);
+
+  // beforePoint を SessionLog から構築
+  const beforePoint: EmotionPoint = session
+    ? { x: session.beforeValence, y: session.beforeArousal }
+    : { x: 0, y: 0 };
+
+  // afterPoint（選択済み or SessionLog から）
+  const afterPoint: EmotionPoint | null =
+    selectedAfterPoint
+      ? { x: selectedAfterPoint.x, y: selectedAfterPoint.y }
+      : (session?.afterValence !== undefined && session?.afterValence !== null)
+        ? { x: session.afterValence, y: session.afterArousal ?? 0 }
+        : null;
+
+  // after が選択済みかどうか
+  const hasAfter = afterPoint !== null;
 
   /**
    * 正規化座標（-1〜1）をピクセル座標に変換
@@ -71,7 +136,7 @@ export default function AfterScreen() {
   };
 
   const beforePosition = getMarkerPosition(beforePoint, BEFORE_MARKER_SIZE);
-  const afterPosition = getMarkerPosition(afterPoint, AFTER_MARKER_SIZE);
+  const afterPosition = afterPoint ? getMarkerPosition(afterPoint, AFTER_MARKER_SIZE) : null;
 
   /**
    * ホームへ戻る
@@ -79,6 +144,19 @@ export default function AfterScreen() {
   const handleGoHome = () => {
     router.replace('/');
   };
+
+  // ローディング中
+  if (loading) {
+    return (
+      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#FF85A2" />
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient
@@ -97,12 +175,20 @@ export default function AfterScreen() {
         <View style={styles.mainContent}>
           {/* 円環セクション（上部） */}
           <View style={styles.wheelSection}>
+            {/* ガイド文（afterがまだの場合） */}
+            {!hasAfter && (
+              <Text style={styles.guideText}>
+                いまの気持ちを{'\n'}タップして選んでね
+              </Text>
+            )}
+
+            {/* 感情ホイール（タップで after を選択） */}
             <View style={[styles.wheelContainer, { width: WHEEL_SIZE, height: WHEEL_SIZE }]}>
-              {/* 円環ベース画像 */}
-              <Image
-                source={require('@/assets/images/emotion_wheel_base.png')}
-                style={[styles.wheelImage, { width: WHEEL_SIZE, height: WHEEL_SIZE }]}
-                resizeMode="contain"
+              <EmotionWheel
+                size={WHEEL_SIZE}
+                labelMode={0}
+                onSelect={handleEmotionSelect}
+                selectedPoint={selectedAfterPoint}
               />
 
               {/* Before マーカー（薄いグレー、小さめ） */}
@@ -120,20 +206,22 @@ export default function AfterScreen() {
                 pointerEvents="none"
               />
 
-              {/* After マーカー（少し濃い色、大きめ） */}
-              <View
-                style={[
-                  styles.afterMarker,
-                  {
-                    left: afterPosition.left,
-                    top: afterPosition.top,
-                    width: AFTER_MARKER_SIZE,
-                    height: AFTER_MARKER_SIZE,
-                    borderRadius: AFTER_MARKER_SIZE / 2,
-                  },
-                ]}
-                pointerEvents="none"
-              />
+              {/* After マーカー（afterが選択済みの場合のみ表示） */}
+              {afterPosition && (
+                <View
+                  style={[
+                    styles.afterMarker,
+                    {
+                      left: afterPosition.left,
+                      top: afterPosition.top,
+                      width: AFTER_MARKER_SIZE,
+                      height: AFTER_MARKER_SIZE,
+                      borderRadius: AFTER_MARKER_SIZE / 2,
+                    },
+                  ]}
+                  pointerEvents="none"
+                />
+              )}
             </View>
 
             {/* 凡例（シンプルに） */}
@@ -219,6 +307,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // ヘッダー
   header: {
@@ -244,6 +337,14 @@ const styles = StyleSheet.create({
   },
   wheelSection: {
     alignItems: 'center',
+  },
+  guideText: {
+    fontSize: 14,
+    color: '#5A6B7C',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 12,
+    fontWeight: '500',
   },
   wheelContainer: {
     position: 'relative',

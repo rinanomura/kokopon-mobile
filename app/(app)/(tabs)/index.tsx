@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import EmotionWheel, { EmotionPoint, LabelMode } from '@/components/EmotionWheel';
+import { listSessionLogs } from '@/lib/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -35,6 +36,37 @@ export default function HomeScreen() {
 
   // 選択された感情の座標（before = アクティビティ前の状態）
   const [beforePoint, setBeforePoint] = useState<EmotionPoint | null>(null);
+
+  // 今月のセッション回数
+  const [monthlySessionCount, setMonthlySessionCount] = useState<number | null>(null);
+
+  /**
+   * 今月のセッション回数を取得
+   */
+  useEffect(() => {
+    const fetchMonthlyCount = async () => {
+      try {
+        const sessions = await listSessionLogs();
+
+        // 今月の開始日を取得
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // 今月のセッションをフィルター
+        const monthlySessions = sessions.filter(session => {
+          const sessionDate = new Date(session.timestamp);
+          return sessionDate >= startOfMonth;
+        });
+
+        setMonthlySessionCount(monthlySessions.length);
+      } catch (error) {
+        console.error('セッション回数取得エラー:', error);
+        setMonthlySessionCount(0);
+      }
+    };
+
+    fetchMonthlyCount();
+  }, []);
 
   /**
    * 円環がタップされたときのハンドラ
@@ -110,11 +142,19 @@ export default function HomeScreen() {
         <View style={styles.wheelContainer}>
           {/* ガイド文 */}
           <View style={styles.guideContainer}>
-            <Image
-              source={require('@/assets/images/rinawan_tilting_head.gif')}
-              style={styles.mascotImage}
-              resizeMode="contain"
-            />
+            {/* りなわん + 回数表示 */}
+            <View style={styles.mascotWrapper}>
+              {monthlySessionCount !== null && (
+                <Text style={styles.sessionCountText}>
+                  今月 {monthlySessionCount + 1} 回目です
+                </Text>
+              )}
+              <Image
+                source={require('@/assets/images/rinawan_tilting_head.gif')}
+                style={styles.mascotImage}
+                resizeMode="contain"
+              />
+            </View>
             <View style={styles.speechBubbleContainer}>
               {/* 吹き出しの尻尾（左向き三角） */}
               <View style={styles.speechBubbleTail} />
@@ -215,6 +255,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  mascotWrapper: {
+    alignItems: 'center',
+  },
+  sessionCountText: {
+    fontSize: 13,
+    color: '#5A6B7C',
+    fontWeight: '600',
+    marginBottom: 4,
   },
   mascotImage: {
     width: 110,

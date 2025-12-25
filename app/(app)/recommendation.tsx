@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -25,13 +25,29 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
  * - マインドフルネス的に安心できるトーンを保つ
  */
 export default function RecommendationScreen() {
+  // beforePoint を受け取る
+  const params = useLocalSearchParams<{
+    beforeX: string;
+    beforeY: string;
+    beforeR: string;
+    beforeTheta: string;
+  }>();
+
   /**
    * トレーニングカードをタップしたときのハンドラ
-   * ⑤瞑想実行画面へ遷移
+   * ⑤瞑想実行画面へ遷移（beforePoint を引き継ぐ）
    */
   const handleStart = () => {
     console.log('=== トレーニング開始 ===');
-    router.push('/meditation');
+    router.push({
+      pathname: '/meditation',
+      params: {
+        beforeX: params.beforeX,
+        beforeY: params.beforeY,
+        beforeR: params.beforeR,
+        beforeTheta: params.beforeTheta,
+      },
+    });
   };
 
   return (

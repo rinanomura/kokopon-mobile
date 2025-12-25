@@ -1,112 +1,266 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import {
+  createSessionLog,
+  listSessionLogs,
+  getUserId,
+  SessionLog,
+} from '@/lib/api';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+/**
+ * API動作確認画面
+ *
+ * GraphQL API（AppSync）への接続テスト用
+ */
+export default function ExploreScreen() {
+  const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState<SessionLog[]>([]);
+  const [message, setMessage] = useState<string>('');
 
-export default function TabTwoScreen() {
+  /**
+   * テスト用 SessionLog を作成
+   */
+  const handleCreateLog = async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      const userId = await getUserId();
+      const now = new Date().toISOString();
+
+      // ランダムな感情座標を生成
+      const beforeValence = Math.random() * 2 - 1;  // -1 〜 1
+      const beforeArousal = Math.random() * 2 - 1;  // -1 〜 1
+      const afterValence = Math.random() * 2 - 1;
+      const afterArousal = Math.random() * 2 - 1;
+
+      const result = await createSessionLog({
+        userId,
+        timestamp: now,
+        beforeValence,
+        beforeArousal,
+        afterValence,
+        afterArousal,
+        meditationType: 'breathing',
+        duration: 30,
+      });
+
+      setMessage(`作成成功: ID=${result.id}`);
+      console.log('=== SessionLog 作成成功 ===');
+      console.log(result);
+    } catch (error) {
+      console.error('SessionLog 作成エラー:', error);
+      setMessage(`エラー: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * SessionLog 一覧を取得
+   */
+  const handleListLogs = async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      const items = await listSessionLogs();
+      setLogs(items);
+      setMessage(`${items.length} 件取得しました`);
+      console.log('=== SessionLog 一覧取得成功 ===');
+      console.log(items);
+    } catch (error) {
+      console.error('SessionLog 取得エラー:', error);
+      setMessage(`エラー: ${error}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
-        </ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <LinearGradient
+      colors={['#7AD7F0', '#CDECF6']}
+      style={styles.gradient}
+    >
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {/* タイトル */}
+          <Text style={styles.title}>API 動作確認</Text>
+          <Text style={styles.subtitle}>
+            AppSync GraphQL への接続テスト
+          </Text>
+
+          {/* ボタン群 */}
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity
+              style={styles.button}
+              onPress={handleCreateLog}
+              disabled={loading}
+            >
+              <LinearGradient
+                colors={['#FF85A2', '#FFB6C1']}
+                style={styles.buttonGradient}
+              >
+                <Text style={styles.buttonText}>
+                  SessionLog 作成（テスト）
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.button}
+              onPress={handleListLogs}
+              disabled={loading}
+            >
+              <LinearGradient
+                colors={['#85C1E9', '#AED6F1']}
+                style={styles.buttonGradient}
+              >
+                <Text style={styles.buttonText}>
+                  SessionLog 一覧取得
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+
+          {/* ローディング */}
+          {loading && (
+            <ActivityIndicator size="large" color="#FF85A2" style={styles.loading} />
+          )}
+
+          {/* メッセージ */}
+          {message !== '' && (
+            <View style={styles.messageContainer}>
+              <Text style={styles.message}>{message}</Text>
+            </View>
+          )}
+
+          {/* ログ一覧 */}
+          {logs.length > 0 && (
+            <View style={styles.logsContainer}>
+              <Text style={styles.logsTitle}>SessionLog 一覧</Text>
+              {logs.map((log) => (
+                <View key={log.id} style={styles.logItem}>
+                  <Text style={styles.logId}>ID: {log.id.slice(0, 8)}...</Text>
+                  <Text style={styles.logDetail}>
+                    Before: ({log.beforeValence.toFixed(2)}, {log.beforeArousal.toFixed(2)})
+                  </Text>
+                  <Text style={styles.logDetail}>
+                    After: ({log.afterValence?.toFixed(2) ?? '-'}, {log.afterArousal?.toFixed(2) ?? '-'})
+                  </Text>
+                  <Text style={styles.logTimestamp}>
+                    {log.meditationType} / {log.duration}秒
+                  </Text>
+                  <Text style={styles.logTimestamp}>
+                    {new Date(log.timestamp).toLocaleString('ja-JP')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  gradient: {
+    flex: 1,
   },
-  titleContainer: {
-    flexDirection: 'row',
-    gap: 8,
+  container: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#4A5568',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#718096',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  buttonContainer: {
+    gap: 16,
+    marginBottom: 24,
+  },
+  button: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  buttonGradient: {
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  loading: {
+    marginVertical: 20,
+  },
+  messageContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  message: {
+    fontSize: 14,
+    color: '#4A5568',
+    textAlign: 'center',
+  },
+  logsContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 12,
+    padding: 16,
+  },
+  logsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+    marginBottom: 16,
+  },
+  logItem: {
+    backgroundColor: 'rgba(122, 215, 240, 0.2)',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  logId: {
+    fontSize: 12,
+    color: '#718096',
+    marginBottom: 4,
+  },
+  logDetail: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#4A5568',
+    marginBottom: 4,
+  },
+  logTimestamp: {
+    fontSize: 12,
+    color: '#A0AEC0',
   },
 });

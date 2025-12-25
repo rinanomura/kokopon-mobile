@@ -10,9 +10,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import { createSessionLog, getUserId } from '@/lib/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -34,12 +35,24 @@ const MEDITATION_DURATION = 30;
  * ただ30秒、今の状態と一緒にいられる体験を提供します。
  */
 export default function MeditationScreen() {
+  // beforePoint を受け取る
+  const params = useLocalSearchParams<{
+    beforeX: string;
+    beforeY: string;
+    beforeR: string;
+    beforeTheta: string;
+  }>();
+
   // 経過時間（秒）
   const [elapsed, setElapsed] = useState(0);
 
   // 音声ガイドの状態
   const [audioGuideActive, setAudioGuideActive] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
+
+  // SessionLog ID（瞑想開始時に作成）
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionCreatedRef = useRef(false);
 
   // フェードアウト用のアニメーション値
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -49,6 +62,42 @@ export default function MeditationScreen() {
 
   // 音声オブジェクトの参照
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  /**
+   * 瞑想開始時に SessionLog を作成（before のみ）
+   */
+  useEffect(() => {
+    if (sessionCreatedRef.current) return;
+
+    const createSession = async () => {
+      sessionCreatedRef.current = true;
+
+      try {
+        const userId = await getUserId();
+        const now = new Date().toISOString();
+        const bx = parseFloat(params.beforeX || '0');
+        const by = parseFloat(params.beforeY || '0');
+
+        const result = await createSessionLog({
+          userId,
+          timestamp: now,
+          beforeValence: bx,
+          beforeArousal: by,
+          meditationType: 'breathing',
+          duration: 30,
+        });
+
+        sessionIdRef.current = result.id;
+        console.log('=== SessionLog 作成（before）===');
+        console.log(result);
+      } catch (error) {
+        console.error('SessionLog 作成エラー:', error);
+      }
+    };
+
+    createSession();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * 30秒タイマーの開始と終了処理
@@ -73,8 +122,13 @@ export default function MeditationScreen() {
             duration: 800,
             useNativeDriver: true,
           }).start(() => {
-            // ⑥ After画面へ遷移（replaceで戻れないようにする）
-            router.replace('/after');
+            // ⑥ After画面へ遷移（sessionIdのみ渡す）
+            router.replace({
+              pathname: '/after',
+              params: {
+                sessionId: sessionIdRef.current || '',
+              },
+            });
           });
         }
 
