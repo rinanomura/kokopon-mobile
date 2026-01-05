@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,57 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// メニュー定義
+type MenuId = 'release_breath' | 'sense_energy' | 'ground_body' | 'calm_stay';
+
+const MENU_DATA: Record<MenuId, {
+  title: string;
+  description: string;
+  bubbleText: string;
+}> = {
+  release_breath: {
+    title: '呼吸の出口を感じてみる 30秒',
+    description: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
+    bubbleText: '少しエネルギーが高まっているみたい。\n吐く息に意識を向けてみようね。',
+  },
+  sense_energy: {
+    title: '今のエネルギーを感じてみる 30秒',
+    description: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
+    bubbleText: '元気なエネルギーがあるみたい。\nその感覚をそのまま感じてみようね。',
+  },
+  ground_body: {
+    title: '体の重さをあずけてみる 30秒',
+    description: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
+    bubbleText: '少し重さを感じているのかな。\n体をあずける感覚を味わってみようね。',
+  },
+  calm_stay: {
+    title: '呼吸を感じてみる 30秒',
+    description: '今の呼吸の出入りを、そのまま静かに感じてみましょう。',
+    bubbleText: '穏やかな状態みたいだね。\nそのまま呼吸を感じてみようね。',
+  },
+};
+
+/**
+ * EmotionPoint から menuId を決定する
+ * - r < 0.25 の場合は calm_stay（中央優先）
+ * - y < 0: 高覚醒（画面座標では上がマイナス）, y >= 0: 低覚醒
+ * - x >= 0: 快, x < 0: 不快
+ */
+function getMenuId(x: number, y: number, r: number): MenuId {
+  // 中央付近は calm_stay
+  if (r < 0.25) {
+    return 'calm_stay';
+  }
+
+  const isHighArousal = y < 0;  // 画面座標では上がマイナス
+  const isPleasant = x >= 0;
+
+  if (isHighArousal && !isPleasant) return 'release_breath';  // 左上：高覚醒×不快
+  if (isHighArousal && isPleasant) return 'sense_energy';     // 右上：高覚醒×快
+  if (!isHighArousal && !isPleasant) return 'ground_body';    // 左下：低覚醒×不快
+  return 'calm_stay';                                          // 右下：低覚醒×快
+}
 
 /**
  * RecommendationScreen - マインドフルネスおすすめ画面（④）
@@ -33,12 +84,22 @@ export default function RecommendationScreen() {
     beforeTheta: string;
   }>();
 
+  // EmotionPoint から適切なメニューを選択
+  const { menu, menuId } = useMemo(() => {
+    const x = parseFloat(params.beforeX || '0');
+    const y = parseFloat(params.beforeY || '0');
+    const r = parseFloat(params.beforeR || '0');
+    const id = getMenuId(x, y, r);
+    return { menu: MENU_DATA[id], menuId: id };
+  }, [params.beforeX, params.beforeY, params.beforeR]);
+
   /**
    * トレーニングカードをタップしたときのハンドラ
    * ⑤瞑想実行画面へ遷移（beforePoint を引き継ぐ）
    */
   const handleStart = () => {
     console.log('=== トレーニング開始 ===');
+    console.log('menuId:', menuId);
     router.push({
       pathname: '/meditation',
       params: {
@@ -46,6 +107,7 @@ export default function RecommendationScreen() {
         beforeY: params.beforeY,
         beforeR: params.beforeR,
         beforeTheta: params.beforeTheta,
+        menuId: menuId,
       },
     });
   };
@@ -69,10 +131,7 @@ export default function RecommendationScreen() {
           <View style={styles.speechBubbleContainer}>
             <View style={styles.speechBubble}>
               <Text style={styles.speechBubbleText}>
-                少し外に向かうエネルギーが{'\n'}
-                あるみたい。{'\n'}
-                まずは呼吸を整えるところから{'\n'}
-                始めてみようね。
+                {menu.bubbleText}
               </Text>
             </View>
             {/* 吹き出しの尻尾（下向き三角） */}
@@ -101,11 +160,10 @@ export default function RecommendationScreen() {
               style={styles.trainingCard}
             >
               <Text style={styles.trainingTitle}>
-                ただ呼吸を感じてみる30秒
+                {menu.title}
               </Text>
               <Text style={styles.trainingDescription}>
-                今の状態を変えようとせず、{'\n'}
-                ただ呼吸を感じてみる短い時間です。
+                {menu.description}
               </Text>
               <View style={styles.tapHintContainer}>
                 <Ionicons

@@ -28,39 +28,40 @@ export default function FootprintsBlock({
   const lines = (() => {
     if (totalCount <= 0) {
       return {
-        top: "まだ、ここに",
-        mid: "足あとがありません。",
+        top: "",
+        mid: "まだ記録がありません",
         bottom: "今の気持ちを選ぶところから、始めてみましょう。",
       };
     }
     if (totalCount === 1) {
       return {
-        top: "ここに、",
-        mid: "ひとつ足あとが残っています。",
-        bottom: "思い出したときに、戻ってきて大丈夫です。",
+        top: "",
+        mid: "一度、ここに立ち止まりました",
+        bottom: "また気が向いたときに、戻ってきてください。",
       };
     }
     return {
-      top: "これまでに",
-      mid: `${totalCount}回 立ち止まっています`,
-      bottom: "思い出したときに、ここに戻ってきた回数です。",
+      top: "",
+      mid: `${totalCount}回、ここに戻ってきています`,
+      bottom: "ふと思い出したときに、立ち止まった記録です。",
     };
   })();
 
   return (
     <View style={styles.wrap} accessibilityLabel="footprints-block">
-      <Text style={styles.top}>{lines.top}</Text>
+      {lines.top ? <Text style={styles.top}>{lines.top}</Text> : null}
 
-      {/* 数字が主役になりすぎない程度に、ここだけ少し強調 */}
-      <Text style={[styles.mid, totalCount >= 2 && styles.midEmph]}>
+      {/* 数字が主役になりすぎない */}
+      <Text style={styles.mid}>
         {lines.mid}
       </Text>
 
-      {/* 利用開始日・今月の回数（任意） */}
+      {/* 利用開始日・今月の回数（2回以上のときのみ） */}
       {totalCount >= 2 && (startedLabel || typeof monthCount === "number") && (
         <Text style={styles.meta}>
-          {startedLabel ? `${startedLabel}から` : ""}
-          {typeof monthCount === "number" ? `${startedLabel ? " / " : ""}今月は${monthCount}回` : ""}
+          {typeof monthCount === "number" ? `今月：${monthCount}回` : ""}
+          {typeof monthCount === "number" && startedLabel ? " / " : ""}
+          {startedLabel ? `はじめた月：${startedLabel}` : ""}
         </Text>
       )}
 
@@ -85,10 +86,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "rgba(0,0,0,0.55)",
     marginBottom: 6,
-  },
-  midEmph: {
-    fontWeight: "600",
-    color: "rgba(0,0,0,0.62)",
   },
   meta: {
     fontSize: 12,

@@ -20,6 +20,37 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 // 瞑想の長さ（秒）
 const MEDITATION_DURATION = 30;
 
+// メニューIDの型定義
+type MenuId = 'release_breath' | 'sense_energy' | 'ground_body' | 'calm_stay';
+
+// メニューIDに対応する音声ファイル
+const AUDIO_FILES = {
+  release_breath: require('@/assets/sounds/release_breath_30s.m4a'),
+  sense_energy: require('@/assets/sounds/sense_energy_30s.m4a'),
+  ground_body: require('@/assets/sounds/ground_body_30s.m4a'),
+  calm_stay: require('@/assets/sounds/calm_stay_30s.m4a'),
+} as const;
+
+// メニューIDに対応するUI表示テキスト
+const MENU_UI: Record<MenuId, { title: string; guideText: string }> = {
+  release_breath: {
+    title: '呼吸の出口を感じる30秒',
+    guideText: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
+  },
+  sense_energy: {
+    title: '今のエネルギーを感じる30秒',
+    guideText: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
+  },
+  ground_body: {
+    title: '体の重さをあずける30秒',
+    guideText: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
+  },
+  calm_stay: {
+    title: '呼吸を感じる30秒',
+    guideText: '今の呼吸の出入りを、そのまま感じてみよう。',
+  },
+};
+
 /**
  * MeditationScreen - 瞑想実行画面（⑤）
  *
@@ -35,13 +66,17 @@ const MEDITATION_DURATION = 30;
  * ただ30秒、今の状態と一緒にいられる体験を提供します。
  */
 export default function MeditationScreen() {
-  // beforePoint を受け取る
+  // beforePoint と menuId を受け取る
   const params = useLocalSearchParams<{
     beforeX: string;
     beforeY: string;
     beforeR: string;
     beforeTheta: string;
+    menuId: MenuId;
   }>();
+
+  // menuId を取得（デフォルトは calm_stay）
+  const menuId: MenuId = (params.menuId as MenuId) || 'calm_stay';
 
   // 経過時間（秒）
   const [elapsed, setElapsed] = useState(0);
@@ -181,9 +216,11 @@ export default function MeditationScreen() {
         staysActiveInBackground: false,
       });
 
-      // 音声ファイルの読み込みと再生
+      // メニューIDに対応する音声ファイルを読み込み・再生
+      const audioFile = AUDIO_FILES[menuId];
+      console.log('音声ガイド開始:', menuId);
       const { sound } = await Audio.Sound.createAsync(
-        require('@/assets/sounds/breathing_30s_bird_guided.m4a'),
+        audioFile,
         { shouldPlay: true, volume: 1.0 }
       );
 
@@ -231,7 +268,7 @@ export default function MeditationScreen() {
           <View style={styles.mainContent}>
             {/* タイトル */}
             <Text style={styles.title}>
-              呼吸を感じる30秒
+              {MENU_UI[menuId].title}
             </Text>
 
             {/* りなわんGIF */}
@@ -245,7 +282,7 @@ export default function MeditationScreen() {
 
             {/* ガイド文 */}
             <Text style={styles.guideText}>
-              今の呼吸の出入りを、そのまま感じてみよう。
+              {MENU_UI[menuId].guideText}
             </Text>
 
             {/* プログレス表示（円形リング） */}

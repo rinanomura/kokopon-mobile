@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,14 @@ import {
   Dimensions,
   TouchableOpacity,
   Image,
+  Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import EmotionWheel, { EmotionPoint, LabelMode } from '@/components/EmotionWheel';
 import { listSessionLogs } from '@/lib/api';
-import FootprintsBlock from '@/components/FootprintsBlock';
 import { useFootprints } from '@/hooks/useFootprints';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -43,6 +44,55 @@ export default function HomeScreen() {
 
   // 今月のセッション回数
   const [monthlySessionCount, setMonthlySessionCount] = useState<number | null>(null);
+
+  // 吹き出しアニメーション
+  const bubbleAnim = useRef(new Animated.Value(0)).current;
+  const sparkle1Anim = useRef(new Animated.Value(0)).current;
+  const sparkle2Anim = useRef(new Animated.Value(0)).current;
+  const sparkle3Anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // 吹き出しふわふわアニメーション
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(bubbleAnim, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(bubbleAnim, {
+          toValue: 0,
+          duration: 2000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    // キラキラアニメーション（それぞれ異なるタイミング）
+    const startSparkleAnim = (anim: Animated.Value, delay: number) => {
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 0.3,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    };
+
+    startSparkleAnim(sparkle1Anim, 0);
+    startSparkleAnim(sparkle2Anim, 400);
+    startSparkleAnim(sparkle3Anim, 800);
+  }, []);
 
   /**
    * 今月のセッション回数を取得
@@ -122,40 +172,51 @@ export default function HomeScreen() {
       style={styles.gradient}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* ヘッダー部分：ラベル切り替えボタン */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={[
-              styles.helpButton,
-              labelMode > 0 && styles.helpButtonActive,
-            ]}
-            onPress={cycleLabelMode}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.helpButtonText}>
-              {labelMode === 0 ? '?' : labelMode === 1 ? '?' : '!'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
         {/* メインコンテンツ：感情円環 */}
         <View style={styles.wheelContainer}>
+          {/* バッジ表示（中央配置） */}
+          <View style={styles.badgeRow}>
+            {monthlySessionCount !== null && (
+              <View style={styles.sessionBadge}>
+                <Text style={styles.sessionBadgeIcon}>🐾</Text>
+                <Text style={styles.sessionBadgeText}>
+                  今月 {monthlySessionCount + 1} 回目
+                </Text>
+              </View>
+            )}
+            {startedAtISO && (
+              <View style={styles.sessionBadge}>
+                <Text style={styles.sessionBadgeIcon}>🌱</Text>
+                <Text style={styles.sessionBadgeText}>
+                  {new Date(startedAtISO).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' })}から参加中
+                </Text>
+              </View>
+            )}
+          </View>
+
           {/* ガイド文 */}
           <View style={styles.guideContainer}>
-            {/* りなわん + 回数表示 */}
+            {/* りなわん */}
             <View style={styles.mascotWrapper}>
-              {monthlySessionCount !== null && (
-                <Text style={styles.sessionCountText}>
-                  今月 {monthlySessionCount + 1} 回目です
-                </Text>
-              )}
               <Image
                 source={require('@/assets/images/rinawan_tilting_head.gif')}
                 style={styles.mascotImage}
                 resizeMode="contain"
               />
             </View>
-            <View style={styles.speechBubbleContainer}>
+            <Animated.View
+              style={[
+                styles.speechBubbleContainer,
+                {
+                  transform: [{
+                    translateY: bubbleAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -4],
+                    }),
+                  }],
+                },
+              ]}
+            >
               {/* 吹き出しの尻尾（左向き三角） */}
               <View style={styles.speechBubbleTail} />
               <LinearGradient
@@ -164,30 +225,45 @@ export default function HomeScreen() {
                 end={{ x: 1, y: 1 }}
                 style={styles.speechBubble}
               >
-                {/* 装飾キラキラ */}
-                <View style={styles.sparkleTopRight}>
-                  <Text style={styles.sparkleText}>✧</Text>
-                </View>
+                {/* 装飾キラキラ（複数配置） */}
+                <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim }]}>
+                  ✧
+                </Animated.Text>
+                <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim }]}>
+                  ✦
+                </Animated.Text>
+                <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim }]}>
+                  ⋆
+                </Animated.Text>
                 <Text style={styles.speechBubbleText}>
                   円の中をタップして、{'\n'}今の気持ちを選んでね
                 </Text>
               </LinearGradient>
-            </View>
+            </Animated.View>
           </View>
 
           {/* 感情円環 */}
-          <EmotionWheel
-            size={WHEEL_SIZE}
-            labelMode={labelMode}
-            onSelect={handleEmotionSelect}
-            selectedPoint={beforePoint}
-          />
-
-          {/* 足あとブロック */}
-          <FootprintsBlock
-            totalCount={totalCount}
-            startedAtISO={startedAtISO}
-          />
+          <View style={styles.wheelWrapper}>
+            <EmotionWheel
+              size={WHEEL_SIZE}
+              labelMode={labelMode}
+              onSelect={handleEmotionSelect}
+              selectedPoint={beforePoint}
+            />
+            {/* ラベル切り替えボタン（円環の右下） */}
+            <TouchableOpacity
+              style={[
+                styles.helpButton,
+                labelMode > 0 && styles.helpButtonActive,
+              ]}
+              onPress={cycleLabelMode}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.helpButtonText}>
+                {labelMode === 0 ? '?' : labelMode === 1 ? '?' : '!'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* フッター部分：トレーニングへ進むボタン */}
@@ -222,32 +298,32 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 20,
-    paddingTop: 10,
+  wheelWrapper: {
+    position: 'relative',
   },
   helpButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 2,
+    elevation: 2,
   },
   helpButtonActive: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#7AD7F0',
   },
   helpButtonText: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '600',
     color: '#5A6B7C',
   },
@@ -265,11 +341,34 @@ const styles = StyleSheet.create({
   mascotWrapper: {
     alignItems: 'center',
   },
-  sessionCountText: {
-    fontSize: 13,
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    gap: 6,
+    position: 'absolute',
+    top: 50,
+  },
+  sessionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#7AD7F0',
+  },
+  sessionBadgeIcon: {
+    fontSize: 10,
+    marginRight: 3,
+  },
+  sessionBadgeText: {
+    fontSize: 10,
     color: '#5A6B7C',
-    fontWeight: '600',
-    marginBottom: 4,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   mascotImage: {
     width: 110,
@@ -304,13 +403,29 @@ const styles = StyleSheet.create({
     elevation: 4,
     position: 'relative',
   },
-  sparkleTopRight: {
+  sparkle: {
     position: 'absolute',
-    top: -6,
-    right: -4,
+    fontSize: 18,
+    color: '#FF69B4',
+    textShadowColor: '#FF69B4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
   },
-  sparkleText: {
-    fontSize: 14,
+  sparkleTopRight: {
+    top: -12,
+    right: -10,
+    fontSize: 22,
+  },
+  sparkleTopLeft: {
+    top: 2,
+    left: -14,
+    fontSize: 18,
+    color: '#FF85A2',
+  },
+  sparkleBottomRight: {
+    bottom: -8,
+    right: -4,
+    fontSize: 16,
     color: '#FFB6C1',
   },
   speechBubbleText: {
