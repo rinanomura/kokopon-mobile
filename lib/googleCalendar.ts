@@ -11,6 +11,7 @@ WebBrowser.maybeCompleteAuthSession();
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID!;
 const GOOGLE_WEB_CLIENT_SECRET = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_SECRET!;
 
+// デバッグ: 環境変数の確認
 console.log('=== ENV Check ===');
 console.log('CLIENT_ID:', GOOGLE_WEB_CLIENT_ID ? 'SET' : 'MISSING');
 console.log('CLIENT_SECRET:', GOOGLE_WEB_CLIENT_SECRET ? 'SET' : 'MISSING');

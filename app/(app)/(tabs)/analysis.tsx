@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,9 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,7 +21,95 @@ import {
   countEventsByDate,
   CalendarEvent,
 } from '@/lib/googleCalendar';
-import { listSessionLogs, SessionLog } from '@/lib/api';
+import {
+  listSessionLogs,
+  SessionLog,
+  listEventClassifications,
+  batchCreateEventClassifications,
+  updateEventClassification,
+  deleteEventClassification,
+  getUserId,
+  EventClassification,
+  EventClassificationParticipants,
+  EventClassificationRelationship,
+  EventClassificationFormat,
+  Person,
+  listPeople,
+  createPerson,
+} from '@/lib/api';
+import {
+  classifyCalendarEvents,
+  getStressColor,
+  analyzeStressPatterns,
+  StressAnalysisResult,
+} from '@/lib/openRouter';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// タブの種類
+type TabType = 'check' | 'chart' | 'aiAnalysis';
+
+const TABS: { key: TabType; label: string; icon: string }[] = [
+  { key: 'check', label: 'チェック', icon: 'list' },
+  { key: 'chart', label: 'チャート', icon: 'bar-chart' },
+  { key: 'aiAnalysis', label: 'AI分析', icon: 'sparkles' },
+];
+
+// 編集用の選択肢
+const PARTICIPANTS_OPTIONS: { value: EventClassificationParticipants; label: string }[] = [
+  { value: 'solo', label: '一人' },
+  { value: 'small', label: '少人数' },
+  { value: 'large', label: '大人数' },
+];
+
+const RELATIONSHIP_OPTIONS: { value: EventClassificationRelationship; label: string }[] = [
+  { value: 'family', label: '家族' },
+  { value: 'work', label: '仕事' },
+  { value: 'friend', label: '友人' },
+  { value: 'stranger', label: '初対面' },
+];
+
+const FORMAT_OPTIONS: { value: EventClassificationFormat; label: string }[] = [
+  { value: 'online', label: 'オンライン' },
+  { value: 'onsite', label: '対面' },
+];
+
+const STRESS_OPTIONS = [1, 2, 3, 4, 5];
+
+/**
+ * 日時をフォーマット（MM/DD HH:mm）
+ */
+function formatDateTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
+}
+
+/**
+ * 時間範囲をフォーマット（HH:mm - HH:mm）
+ */
+function formatTimeRange(startStr: string, endStr: string): string {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const startTime = `${start.getHours().toString().padStart(2, '0')}:${start.getMinutes().toString().padStart(2, '0')}`;
+  const endTime = `${end.getHours().toString().padStart(2, '0')}:${end.getMinutes().toString().padStart(2, '0')}`;
+  return `${startTime} - ${endTime}`;
+}
+
+/**
+ * 日付ヘッダー用フォーマット（M月D日（曜日））
+ */
+function formatDateHeader(dateStr: string): string {
+  const date = new Date(dateStr);
+  const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekday = weekdays[date.getDay()];
+  return `${month}月${day}日（${weekday}）`;
+}
 
 /**
  * 日付をフォーマット（MM/DD）
@@ -26,6 +117,13 @@ import { listSessionLogs, SessionLog } from '@/lib/api';
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/**
+ * 日付キーを取得（YYYY-MM-DD）
+ */
+function getDateKey(dateStr: string): string {
+  return dateStr.split('T')[0];
 }
 
 /**
@@ -40,25 +138,62 @@ function getBusyLevel(eventCount: number): { label: string; color: string } {
 
 /**
  * AnalysisScreen - 分析画面
- *
- * Googleカレンダー連携 + セッションデータの相関分析
  */
 export default function AnalysisScreen() {
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
 
+  const [activeTab, setActiveTab] = useState<TabType>('check');
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [sessions, setSessions] = useState<SessionLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [savedClassifications, setSavedClassifications] = useState<EventClassification[]>([]);
+
+  // 編集モーダル
+  const [editingEvent, setEditingEvent] = useState<EventClassification | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+
+  // 削除モーダル
+  const [deletingEvent, setDeletingEvent] = useState<EventClassification | null>(null);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+
+  // 参加者（Person）関連
+  const [people, setPeople] = useState<Person[]>([]);
+  const [newPersonName, setNewPersonName] = useState('');
+
+  // チャート拡大/縮小（デフォルトは30日表示）
+  const [isChartExpanded, setIsChartExpanded] = useState(false);
+
+  // チャート詳細モーダル
+  const [selectedDayData, setSelectedDayData] = useState<{
+    date: string;
+    events: { score: number; summary: string }[];
+    totalStress: number;
+    hasSession: boolean;
+  } | null>(null);
+
+  // AI分析
+  const [analysisResult, setAnalysisResult] = useState<StressAnalysisResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   // 日別のイベント数
   const [eventCountByDate, setEventCountByDate] = useState<Record<string, number>>({});
+
+  // 認証コードの重複使用を防ぐためのRef
+  const processedCodeRef = useRef<string | null>(null);
 
   /**
    * OAuth レスポンス処理
    */
   useEffect(() => {
     if (response?.type === 'success' && response.params.code && request?.codeVerifier) {
+      // 同じ認証コードを2回処理しないようにチェック
+      if (processedCodeRef.current === response.params.code) {
+        console.log('Code already processed, skipping...');
+        return;
+      }
+      processedCodeRef.current = response.params.code;
       handleAuthSuccess(response.params.code, request.codeVerifier);
     }
   }, [response]);
@@ -90,18 +225,23 @@ export default function AnalysisScreen() {
   const fetchData = async (token: string) => {
     setLoading(true);
     try {
-      // 過去30日のデータを取得
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-      // カレンダーイベント取得
       const events = await fetchCalendarEvents(token, thirtyDaysAgo, now);
       setCalendarEvents(events);
       setEventCountByDate(countEventsByDate(events));
 
-      // セッションログ取得
       const sessionLogs = await listSessionLogs();
       setSessions(sessionLogs);
+
+      // 保存済みの分類を取得
+      const classifications = await listEventClassifications();
+      setSavedClassifications(classifications);
+
+      // Personリストを取得
+      const peopleList = await listPeople();
+      setPeople(peopleList);
     } catch (error) {
       console.error('Fetch data error:', error);
     } finally {
@@ -117,10 +257,283 @@ export default function AnalysisScreen() {
   }, [promptAsync]);
 
   /**
+   * カレンダーイベントをAIで分類してDBに保存
+   */
+  const handleClassify = useCallback(async () => {
+    if (calendarEvents.length === 0) {
+      Alert.alert('エラー', '分類するイベントがありません');
+      return;
+    }
+
+    // 既に分類済みのイベントIDを取得
+    const classifiedEventIds = new Set(savedClassifications.map(c => c.eventId));
+
+    // 未分類のイベントのみ抽出
+    const unclassifiedEvents = calendarEvents.filter(e => !classifiedEventIds.has(e.id));
+
+    if (unclassifiedEvents.length === 0) {
+      Alert.alert('情報', 'すべてのイベントは分類済みです');
+      return;
+    }
+
+    setClassifying(true);
+    try {
+      const userId = await getUserId();
+      const classified = await classifyCalendarEvents(unclassifiedEvents);
+
+      // DBに保存
+      const inputs = classified.map((event) => ({
+        userId,
+        eventId: event.id,
+        eventSummary: event.summary,
+        eventStart: event.start,
+        eventEnd: event.end,
+        participants: event.classification.participants as EventClassificationParticipants,
+        relationships: event.classification.relationships as EventClassificationRelationship[] | null,
+        format: event.classification.format as EventClassificationFormat,
+        eventType: event.classification.eventType,
+        stressScore: event.classification.stressScore,
+        isManuallyEdited: false,
+        source: 'ai' as const,
+      }));
+
+      const saved = await batchCreateEventClassifications(inputs);
+      setSavedClassifications(prev => [...prev, ...saved]);
+
+      Alert.alert('完了', `${saved.length}件のイベントを分類しました`);
+    } catch (error) {
+      console.error('Classification error:', error);
+      Alert.alert('エラー', 'AI分類中にエラーが発生しました');
+    } finally {
+      setClassifying(false);
+    }
+  }, [calendarEvents, savedClassifications]);
+
+  /**
+   * 編集を開始
+   */
+  const handleEditStart = (event: EventClassification) => {
+    setEditingEvent({ ...event });
+    setEditModalVisible(true);
+  };
+
+  /**
+   * 削除を開始
+   */
+  const handleDeleteStart = (event: EventClassification) => {
+    setDeletingEvent(event);
+    setDeleteModalVisible(true);
+  };
+
+  /**
+   * 削除を確認
+   */
+  const handleDeleteConfirm = async () => {
+    if (!deletingEvent) return;
+
+    try {
+      await deleteEventClassification(deletingEvent.id);
+      setSavedClassifications(prev =>
+        prev.filter(c => c.id !== deletingEvent.id)
+      );
+      setDeleteModalVisible(false);
+      setDeletingEvent(null);
+    } catch (error) {
+      console.error('Delete error:', error);
+      Alert.alert('エラー', '削除に失敗しました');
+    }
+  };
+
+  /**
+   * 新しい人を追加
+   */
+  const handleAddPerson = async () => {
+    if (!newPersonName.trim()) return;
+
+    try {
+      const userId = await getUserId();
+      const newPerson = await createPerson({
+        personId: userId,
+        name: newPersonName.trim(),
+      });
+      setPeople(prev => [...prev, newPerson]);
+      setNewPersonName('');
+
+      // 追加した人を選択状態にする
+      if (editingEvent) {
+        const currentAttendees = editingEvent.attendeeIds || [];
+        setEditingEvent({
+          ...editingEvent,
+          attendeeIds: [...currentAttendees, newPerson.id],
+        });
+      }
+    } catch (error) {
+      console.error('Add person error:', error);
+      Alert.alert('エラー', '追加に失敗しました');
+    }
+  };
+
+  /**
+   * 参加者の選択をトグル
+   */
+  const toggleAttendee = (personId: string) => {
+    if (!editingEvent) return;
+
+    const currentAttendees = editingEvent.attendeeIds || [];
+    const isSelected = currentAttendees.includes(personId);
+
+    let newAttendees: string[];
+    if (isSelected) {
+      newAttendees = currentAttendees.filter(id => id !== personId);
+    } else {
+      newAttendees = [...currentAttendees, personId];
+    }
+
+    setEditingEvent({
+      ...editingEvent,
+      attendeeIds: newAttendees.length > 0 ? newAttendees : null,
+    });
+  };
+
+  /**
+   * 編集を保存
+   */
+  const handleEditSave = async () => {
+    if (!editingEvent) return;
+
+    try {
+      const updated = await updateEventClassification(editingEvent.id, {
+        eventSummary: editingEvent.eventSummary,
+        participants: editingEvent.participants,
+        relationships: editingEvent.relationships,
+        format: editingEvent.format,
+        stressScore: editingEvent.stressScore,
+        attendeeIds: editingEvent.attendeeIds,
+        isManuallyEdited: true,
+      });
+
+      setSavedClassifications(prev =>
+        prev.map(c => c.id === updated.id ? updated : c)
+      );
+      setEditModalVisible(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error('Update error:', error);
+      Alert.alert('エラー', '更新に失敗しました');
+    }
+  };
+
+  /**
+   * 関係性の選択をトグル
+   */
+  const toggleRelationship = (value: EventClassificationRelationship) => {
+    if (!editingEvent) return;
+
+    const currentRelationships = editingEvent.relationships || [];
+    const isSelected = currentRelationships.includes(value);
+
+    let newRelationships: EventClassificationRelationship[];
+    if (isSelected) {
+      newRelationships = currentRelationships.filter(r => r !== value);
+    } else {
+      newRelationships = [...currentRelationships, value];
+    }
+
+    setEditingEvent({
+      ...editingEvent,
+      relationships: newRelationships.length > 0 ? newRelationships : null,
+    });
+  };
+
+  /**
+   * 参加者タイプのラベル
+   */
+  const getParticipantsLabel = (p?: string): string => {
+    switch (p) {
+      case 'solo': return '一人';
+      case 'small': return '少人数';
+      case 'large': return '大人数';
+      default: return '-';
+    }
+  };
+
+  /**
+   * 関係性のラベル（配列対応）
+   */
+  const getRelationshipLabel = (r?: string | null): string => {
+    if (!r) return '';
+    switch (r) {
+      case 'family': return '家族';
+      case 'work': return '仕事';
+      case 'friend': return '友人';
+      case 'stranger': return '初対面';
+      default: return r;
+    }
+  };
+
+  /**
+   * 関係性配列からラベル配列を取得
+   */
+  const getRelationshipsLabels = (relationships?: EventClassificationRelationship[] | null): string[] => {
+    if (!relationships || relationships.length === 0) return [];
+    return relationships.map(r => getRelationshipLabel(r));
+  };
+
+  /**
+   * フォーマットのラベル
+   */
+  const getFormatLabel = (f?: string): string => {
+    return f === 'online' ? 'オンライン' : '対面';
+  };
+
+  /**
+   * 日別ストレスデータを計算
+   */
+  const dailyStressData = useMemo(() => {
+    // 過去30日間の日付を生成（今日から30日前まで）
+    const days: string[] = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().split('T')[0]);
+    }
+
+    // 日付ごとにイベントをグループ化（ストレススコアの配列を保持）
+    const byDate: Record<string, { events: { score: number; summary: string }[]; hasSession: boolean }> = {};
+    days.forEach(date => {
+      byDate[date] = { events: [], hasSession: false };
+    });
+
+    savedClassifications.forEach((event) => {
+      const dateStr = event.eventStart.split('T')[0];
+      if (byDate[dateStr] && event.stressScore) {
+        byDate[dateStr].events.push({
+          score: event.stressScore,
+          summary: event.eventSummary,
+        });
+      }
+    });
+
+    sessions.forEach((session) => {
+      const dateStr = session.timestamp.split('T')[0];
+      if (byDate[dateStr]) {
+        byDate[dateStr].hasSession = true;
+      }
+    });
+
+    return days.map(date => ({
+      date,
+      events: byDate[date].events,
+      totalStress: byDate[date].events.reduce((sum, e) => sum + e.score, 0),
+      hasSession: byDate[date].hasSession,
+    }));
+  }, [savedClassifications, sessions]);
+
+  /**
    * 相関データを計算
    */
-  const getCorrelationData = () => {
-    // セッションを日付でグループ化
+  const correlationData = useMemo(() => {
     const sessionsByDate: Record<string, SessionLog[]> = {};
     sessions.forEach((session) => {
       const date = session.timestamp.split('T')[0];
@@ -130,8 +543,7 @@ export default function AnalysisScreen() {
       sessionsByDate[date].push(session);
     });
 
-    // 日別の相関データを作成
-    const correlationData: Array<{
+    const data: Array<{
       date: string;
       eventCount: number;
       avgArousalBefore: number;
@@ -154,7 +566,7 @@ export default function AnalysisScreen() {
           ? afterSessions.reduce((sum, s) => sum + (s.afterArousal ?? 0), 0) / afterSessions.length
           : null;
 
-      correlationData.push({
+      data.push({
         date,
         eventCount,
         avgArousalBefore,
@@ -163,11 +575,799 @@ export default function AnalysisScreen() {
       });
     });
 
-    // 日付で降順ソート
-    return correlationData.sort((a, b) => b.date.localeCompare(a.date));
+    return data.sort((a, b) => b.date.localeCompare(a.date));
+  }, [sessions, eventCountByDate]);
+
+  /**
+   * 日付でグループ化した分類データ
+   */
+  const groupedByDate = useMemo(() => {
+    const groups: Record<string, EventClassification[]> = {};
+
+    savedClassifications.forEach((event) => {
+      const dateKey = getDateKey(event.eventStart);
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(event);
+    });
+
+    // 各グループ内を時間順にソート
+    Object.values(groups).forEach((events) => {
+      events.sort((a, b) => new Date(a.eventStart).getTime() - new Date(b.eventStart).getTime());
+    });
+
+    // 日付を新しい順にソート
+    return Object.entries(groups)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, events]) => ({ date, events }));
+  }, [savedClassifications]);
+
+  /**
+   * 未分類のイベント数
+   */
+  const unclassifiedCount = useMemo(() => {
+    const classifiedEventIds = new Set(savedClassifications.map(c => c.eventId));
+    return calendarEvents.filter(e => !classifiedEventIds.has(e.id)).length;
+  }, [calendarEvents, savedClassifications]);
+
+  /**
+   * ストレスチェックタブ
+   */
+  const renderCheckTab = () => {
+    return (
+      <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
+        {/* AI分類ボタン（未分類がある場合のみ表示） */}
+        {unclassifiedCount > 0 && (
+          <TouchableOpacity
+            style={styles.classifyButton}
+            onPress={handleClassify}
+            disabled={classifying}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={classifying ? ['#A0AEC0', '#A0AEC0'] : ['#9F7AEA', '#805AD5']}
+              style={styles.classifyButtonGradient}
+            >
+              {classifying ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Ionicons name="sparkles" size={18} color="#FFF" />
+              )}
+              <Text style={styles.classifyButtonText}>
+                {classifying ? 'AI分類中...' : `${unclassifiedCount}件を分析`}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+
+        {/* 分類結果（日付グループ） */}
+        {groupedByDate.length > 0 ? (
+          groupedByDate.map(({ date, events }) => (
+            <View key={date}>
+              {/* 日付ヘッダー */}
+              <View style={styles.dateHeader}>
+                <Text style={styles.dateHeaderText}>{formatDateHeader(date)}</Text>
+              </View>
+
+              {/* イベントカード */}
+              {events.map((event) => (
+                <TouchableOpacity
+                  key={event.id}
+                  style={styles.eventCard}
+                  onPress={() => handleEditStart(event)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.eventHeader}>
+                    <View style={styles.eventTitleRow}>
+                      <Text style={styles.eventTime}>
+                        {formatTimeRange(event.eventStart, event.eventEnd)}
+                      </Text>
+                      <View style={styles.eventBadges}>
+                        {event.isManuallyEdited && (
+                          <View style={styles.editedBadge}>
+                            <Text style={styles.editedBadgeText}>編集済</Text>
+                          </View>
+                        )}
+                        <View
+                          style={[
+                            styles.stressBadge,
+                            { backgroundColor: getStressColor(event.stressScore || 3) },
+                          ]}
+                        >
+                          <Text style={styles.stressBadgeText}>
+                            {event.stressScore || '-'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <Text style={styles.eventTitle} numberOfLines={1}>
+                      {event.eventSummary}
+                    </Text>
+                  </View>
+                  <View style={styles.eventTagsRow}>
+                    <View style={styles.eventTags}>
+                      <View style={styles.tag}>
+                        <Text style={styles.tagText}>
+                          {getParticipantsLabel(event.participants)}
+                        </Text>
+                      </View>
+                      {/* 一人以外の場合のみ関係性を表示 */}
+                      {event.participants !== 'solo' && (
+                        event.relationships && event.relationships.length > 0 ? (
+                          event.relationships.map((rel, idx) => (
+                            <View key={idx} style={styles.tag}>
+                              <Text style={styles.tagText}>
+                                {getRelationshipLabel(rel)}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <View style={styles.warningTag}>
+                            <Ionicons name="alert-circle" size={12} color="#ED8936" />
+                            <Text style={styles.warningTagText}>関係性を設定</Text>
+                          </View>
+                        )
+                      )}
+                      {/* 一人以外の場合のみ形式を表示 */}
+                      {event.participants !== 'solo' && (
+                        <View style={styles.tag}>
+                          <Text style={styles.tagText}>
+                            {getFormatLabel(event.format)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDeleteStart(event);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#E53E3E" />
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ))
+        ) : (
+          <View style={styles.emptyState}>
+            <Ionicons name="calendar-outline" size={48} color="#A0AEC0" style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyText}>
+              {unclassifiedCount > 0
+                ? `${unclassifiedCount}件の予定があります\n上のボタンで分析してください`
+                : 'カレンダーに予定がありません'}
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    );
   };
 
-  const correlationData = getCorrelationData();
+  /**
+   * チャートタブ
+   */
+  const renderChartTab = () => {
+    const maxTotalStress = Math.max(
+      ...dailyStressData.map(d => d.totalStress),
+      5 // 最低でも5を上限とする
+    );
+    // 拡大時: 10日分が1画面、縮小時: 30日全て1画面
+    // 縮小時: コンテナパディング(32) + タブパディング(32) + Y軸(24) を引く
+    const shrunkChartWidth = SCREEN_WIDTH - 32 - 32 - 24;
+    const barWidth = isChartExpanded
+      ? (SCREEN_WIDTH - 60) / 10
+      : shrunkChartWidth / 30;
+    const chartHeight = 140;
+    const segmentHeight = isChartExpanded ? 16 : 8; // 縮小時はセグメント高さも小さく
+
+    const renderBars = () => (
+      <View style={isChartExpanded ? styles.expandedBarsContainer : styles.shrunkBarsContainer}>
+        {dailyStressData.map((item) => (
+          <TouchableOpacity
+            key={item.date}
+            style={[styles.barWrapper, { width: barWidth }]}
+            onPress={() => item.events.length > 0 && setSelectedDayData(item)}
+            activeOpacity={item.events.length > 0 ? 0.7 : 1}
+          >
+            <View style={[styles.barColumn, { height: chartHeight }]}>
+              {item.events.length > 0 ? (
+                <View style={styles.stackedBar}>
+                  {item.events.map((event, idx) => {
+                    const height = Math.max(
+                      (event.score / maxTotalStress) * chartHeight,
+                      segmentHeight
+                    );
+                    return (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.barSegment,
+                          {
+                            height,
+                            backgroundColor: getStressColor(event.score),
+                          },
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={styles.emptyBar} />
+              )}
+            </View>
+            {item.hasSession && (
+              <View style={styles.sessionMarker}>
+                <Text style={styles.sessionMarkerText}>●</Text>
+              </View>
+            )}
+            {isChartExpanded ? (
+              <Text style={styles.barLabel}>{formatDate(item.date)}</Text>
+            ) : (
+              // 縮小時は5日おきにラベル表示
+              parseInt(item.date.slice(8)) % 5 === 0 && (
+                <Text style={styles.barLabelSmall}>{item.date.slice(8)}</Text>
+              )
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+
+    return (
+      <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
+        <View style={styles.chartContainer}>
+          <View style={styles.chartHeader}>
+            <Text style={styles.chartTitle}>日別ストレスレベル（直近30日）</Text>
+            <TouchableOpacity
+              style={styles.chartToggleButton}
+              onPress={() => setIsChartExpanded(!isChartExpanded)}
+            >
+              <Ionicons
+                name={isChartExpanded ? 'contract-outline' : 'expand-outline'}
+                size={20}
+                color="#805AD5"
+              />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.chartWrapper}>
+            <View style={styles.yAxis}>
+              {[maxTotalStress, Math.floor(maxTotalStress * 0.75), Math.floor(maxTotalStress * 0.5), Math.floor(maxTotalStress * 0.25), 0].map((n, i) => (
+                <Text key={i} style={styles.yAxisLabel}>{n}</Text>
+              ))}
+            </View>
+
+            {isChartExpanded ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={true}
+                contentContainerStyle={styles.horizontalBarsContainer}
+              >
+                {renderBars()}
+              </ScrollView>
+            ) : (
+              renderBars()
+            )}
+          </View>
+
+          <View style={styles.legend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendColor, { backgroundColor: '#4CAF50' }]} />
+              <Text style={styles.legendText}>低</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendColor, { backgroundColor: '#FFC107' }]} />
+              <Text style={styles.legendText}>中</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendColor, { backgroundColor: '#F44336' }]} />
+              <Text style={styles.legendText}>高</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <Text style={styles.sessionDot}>●</Text>
+              <Text style={styles.legendText}>セッション実施日</Text>
+            </View>
+          </View>
+
+          {isChartExpanded && <Text style={styles.chartHint}>← 左右にスワイプ →</Text>}
+        </View>
+      </ScrollView>
+    );
+  };
+
+  /**
+   * AI分析を実行
+   */
+  const handleAnalyze = async () => {
+    if (savedClassifications.length === 0) {
+      Alert.alert('エラー', '分析するデータがありません。先に「チェック」タブでAI分類を実行してください。');
+      return;
+    }
+
+    setAnalyzing(true);
+    try {
+      const result = await analyzeStressPatterns({
+        events: savedClassifications.map(e => ({
+          date: e.eventStart,
+          summary: e.eventSummary,
+          stressScore: e.stressScore || 3,
+          participants: e.participants,
+          relationships: e.relationships || undefined,
+          format: e.format,
+        })),
+        sessions: sessions.map(s => ({
+          date: s.timestamp,
+          beforeArousal: s.beforeArousal,
+          afterArousal: s.afterArousal ?? undefined,
+        })),
+        totalDays: 30,
+      });
+      setAnalysisResult(result);
+    } catch (error) {
+      console.error('Analysis error:', error);
+      Alert.alert('エラー', 'AI分析中にエラーが発生しました');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  /**
+   * AI分析タブ
+   */
+  const renderAiAnalysisTab = () => (
+    <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
+      {/* 分析ボタン */}
+      <TouchableOpacity
+        style={styles.analyzeButton}
+        onPress={handleAnalyze}
+        disabled={analyzing || savedClassifications.length === 0}
+        activeOpacity={0.8}
+      >
+        <LinearGradient
+          colors={analyzing ? ['#A0AEC0', '#A0AEC0'] : ['#9F7AEA', '#805AD5']}
+          style={styles.analyzeButtonGradient}
+        >
+          {analyzing ? (
+            <ActivityIndicator size="small" color="#FFF" />
+          ) : (
+            <Ionicons name="sparkles" size={18} color="#FFF" />
+          )}
+          <Text style={styles.analyzeButtonText}>
+            {analyzing ? 'AI分析中...' : 'AIでストレス傾向を分析'}
+          </Text>
+        </LinearGradient>
+      </TouchableOpacity>
+
+      {/* 分析結果 */}
+      {analysisResult ? (
+        <View style={styles.analysisResultContainer}>
+          {/* サマリー */}
+          <View style={styles.analysisCard}>
+            <View style={styles.analysisCardHeader}>
+              <Ionicons name="analytics-outline" size={20} color="#805AD5" />
+              <Text style={styles.analysisCardTitle}>分析サマリー</Text>
+            </View>
+            <Text style={styles.analysisSummaryText}>{analysisResult.summary}</Text>
+          </View>
+
+          {/* インサイト */}
+          {analysisResult.insights.length > 0 && (
+            <View style={styles.analysisCard}>
+              <View style={styles.analysisCardHeader}>
+                <Ionicons name="bulb-outline" size={20} color="#ED8936" />
+                <Text style={styles.analysisCardTitle}>気づき</Text>
+              </View>
+              {analysisResult.insights.map((insight, idx) => (
+                <View key={idx} style={styles.analysisListItem}>
+                  <Text style={styles.analysisListBullet}>•</Text>
+                  <Text style={styles.analysisListText}>{insight}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* アドバイス */}
+          {analysisResult.advice.length > 0 && (
+            <View style={styles.analysisCard}>
+              <View style={styles.analysisCardHeader}>
+                <Ionicons name="heart-outline" size={20} color="#48BB78" />
+                <Text style={styles.analysisCardTitle}>アドバイス</Text>
+              </View>
+              {analysisResult.advice.map((advice, idx) => (
+                <View key={idx} style={styles.analysisListItem}>
+                  <Text style={styles.analysisListBullet}>✓</Text>
+                  <Text style={styles.analysisListText}>{advice}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* リスクの高い日 */}
+          {analysisResult.riskDays.length > 0 && (
+            <View style={styles.analysisCard}>
+              <View style={styles.analysisCardHeader}>
+                <Ionicons name="warning-outline" size={20} color="#E53E3E" />
+                <Text style={styles.analysisCardTitle}>注意が必要な日</Text>
+              </View>
+              <View style={styles.analysisTagsRow}>
+                {analysisResult.riskDays.map((day, idx) => (
+                  <View key={idx} style={styles.analysisRiskTag}>
+                    <Text style={styles.analysisRiskTagText}>{day}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* ポジティブなパターン */}
+          {analysisResult.positivePatterns.length > 0 && (
+            <View style={styles.analysisCard}>
+              <View style={styles.analysisCardHeader}>
+                <Ionicons name="sunny-outline" size={20} color="#4299E1" />
+                <Text style={styles.analysisCardTitle}>良いパターン</Text>
+              </View>
+              {analysisResult.positivePatterns.map((pattern, idx) => (
+                <View key={idx} style={styles.analysisListItem}>
+                  <Text style={styles.analysisListBullet}>★</Text>
+                  <Text style={styles.analysisListText}>{pattern}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      ) : (
+        <View style={styles.adviceContainer}>
+          <Ionicons name="sparkles-outline" size={48} color="#9F7AEA" />
+          <Text style={styles.adviceTitle}>AI分析</Text>
+          <Text style={styles.adviceDescription}>
+            ストレス傾向や人間関係のパターンを{'\n'}AIが分析してアドバイスを提供します
+          </Text>
+          <Text style={styles.analysisDataInfo}>
+            {savedClassifications.length}件のデータがあります
+          </Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+
+  /**
+   * タブコンテンツをレンダリング
+   */
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'check':
+        return renderCheckTab();
+      case 'chart':
+        return renderChartTab();
+      case 'aiAnalysis':
+        return renderAiAnalysisTab();
+      default:
+        return null;
+    }
+  };
+
+  /**
+   * 編集モーダル
+   */
+  const renderEditModal = () => (
+    <Modal
+      visible={editModalVisible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setEditModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>分類を編集</Text>
+            <TouchableOpacity onPress={() => setEditModalVisible(false)}>
+              <Ionicons name="close" size={24} color="#4A5568" />
+            </TouchableOpacity>
+          </View>
+
+          {editingEvent && (
+            <ScrollView style={styles.modalBody}>
+              <Text style={styles.modalLabel}>タイトル</Text>
+              <TextInput
+                style={styles.titleInput}
+                value={editingEvent.eventSummary}
+                onChangeText={(text) => setEditingEvent({ ...editingEvent, eventSummary: text })}
+                placeholder="イベントタイトル"
+              />
+              <Text style={styles.modalEventTime}>
+                {formatDateTime(editingEvent.eventStart)}
+              </Text>
+
+              {/* 参加者 */}
+              <Text style={styles.modalLabel}>参加者</Text>
+              <View style={styles.optionRow}>
+                {PARTICIPANTS_OPTIONS.map((opt) => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.optionButton,
+                      editingEvent.participants === opt.value && styles.optionButtonActive,
+                    ]}
+                    onPress={() => setEditingEvent({ ...editingEvent, participants: opt.value })}
+                  >
+                    <Text
+                      style={[
+                        styles.optionText,
+                        editingEvent.participants === opt.value && styles.optionTextActive,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* 誰と一緒？ - 一人の場合は非表示 */}
+              {editingEvent.participants !== 'solo' && (
+                <>
+                  <Text style={styles.modalLabel}>誰と一緒？</Text>
+                  {people.length > 0 && (
+                    <View style={styles.attendeeList}>
+                      {people.map((person) => {
+                        const isSelected = editingEvent.attendeeIds?.includes(person.id) ?? false;
+                        return (
+                          <TouchableOpacity
+                            key={person.id}
+                            style={[
+                              styles.attendeeChip,
+                              isSelected && styles.attendeeChipActive,
+                            ]}
+                            onPress={() => toggleAttendee(person.id)}
+                          >
+                            <Text
+                              style={[
+                                styles.attendeeChipText,
+                                isSelected && styles.attendeeChipTextActive,
+                              ]}
+                            >
+                              {person.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                  <View style={styles.addPersonRow}>
+                    <TextInput
+                      style={styles.addPersonInput}
+                      value={newPersonName}
+                      onChangeText={setNewPersonName}
+                      placeholder="新しい人を追加"
+                      placeholderTextColor="#A0AEC0"
+                    />
+                    <TouchableOpacity
+                      style={[
+                        styles.addPersonButton,
+                        !newPersonName.trim() && styles.addPersonButtonDisabled,
+                      ]}
+                      onPress={handleAddPerson}
+                      disabled={!newPersonName.trim()}
+                    >
+                      <Ionicons name="add" size={20} color="#FFF" />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {/* 関係性（複数選択）- 一人の場合は非表示 */}
+              {editingEvent.participants !== 'solo' && (
+                <>
+                  <Text style={styles.modalLabel}>関係性（複数選択可）</Text>
+                  <View style={styles.optionRow}>
+                    {RELATIONSHIP_OPTIONS.map((opt) => {
+                      const isSelected = editingEvent.relationships?.includes(opt.value) ?? false;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[
+                            styles.optionButton,
+                            isSelected && styles.optionButtonActive,
+                          ]}
+                          onPress={() => toggleRelationship(opt.value)}
+                        >
+                          <View style={styles.checkboxRow}>
+                            <Ionicons
+                              name={isSelected ? 'checkbox' : 'square-outline'}
+                              size={16}
+                              color={isSelected ? '#FFFFFF' : '#4A5568'}
+                            />
+                            <Text
+                              style={[
+                                styles.optionText,
+                                isSelected && styles.optionTextActive,
+                              ]}
+                            >
+                              {opt.label}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              {/* 形式 - 一人の場合は非表示 */}
+              {editingEvent.participants !== 'solo' && (
+                <>
+                  <Text style={styles.modalLabel}>形式</Text>
+                  <View style={styles.optionRow}>
+                    {FORMAT_OPTIONS.map((opt) => (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[
+                          styles.optionButton,
+                          editingEvent.format === opt.value && styles.optionButtonActive,
+                        ]}
+                        onPress={() => setEditingEvent({ ...editingEvent, format: opt.value })}
+                      >
+                        <Text
+                          style={[
+                            styles.optionText,
+                            editingEvent.format === opt.value && styles.optionTextActive,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {/* ストレススコア */}
+              <Text style={styles.modalLabel}>ストレスレベル</Text>
+              <View style={styles.stressRow}>
+                {STRESS_OPTIONS.map((score) => (
+                  <TouchableOpacity
+                    key={score}
+                    style={[
+                      styles.stressButton,
+                      { backgroundColor: getStressColor(score) },
+                      editingEvent.stressScore === score && styles.stressButtonActive,
+                    ]}
+                    onPress={() => setEditingEvent({ ...editingEvent, stressScore: score })}
+                  >
+                    <Text style={styles.stressButtonText}>{score}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.stressLabels}>
+                <Text style={styles.stressLabelText}>リラックス</Text>
+                <Text style={styles.stressLabelText}>高ストレス</Text>
+              </View>
+            </ScrollView>
+          )}
+
+          <View style={styles.modalFooter}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setEditModalVisible(false)}
+            >
+              <Text style={styles.cancelButtonText}>キャンセル</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleEditSave}
+            >
+              <Text style={styles.saveButtonText}>保存</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  /**
+   * チャート詳細モーダル
+   */
+  const renderChartDetailModal = () => (
+    <Modal
+      visible={selectedDayData !== null}
+      animationType="fade"
+      transparent={true}
+      onRequestClose={() => setSelectedDayData(null)}
+    >
+      <View style={styles.chartDetailOverlay}>
+        <View style={styles.chartDetailContent}>
+          <View style={styles.chartDetailHeader}>
+            <Text style={styles.chartDetailTitle}>
+              {selectedDayData ? formatDateHeader(selectedDayData.date) : ''}
+            </Text>
+            <TouchableOpacity onPress={() => setSelectedDayData(null)}>
+              <Ionicons name="close" size={24} color="#4A5568" />
+            </TouchableOpacity>
+          </View>
+
+          {selectedDayData && (
+            <ScrollView style={styles.chartDetailBody}>
+              {selectedDayData.events.map((event, idx) => (
+                <View key={idx} style={styles.chartDetailItem}>
+                  <View
+                    style={[
+                      styles.chartDetailStressBadge,
+                      { backgroundColor: getStressColor(event.score) },
+                    ]}
+                  >
+                    <Text style={styles.chartDetailStressText}>{event.score}</Text>
+                  </View>
+                  <Text style={styles.chartDetailEventText} numberOfLines={2}>
+                    {event.summary}
+                  </Text>
+                </View>
+              ))}
+
+              <View style={styles.chartDetailSummary}>
+                <Text style={styles.chartDetailSummaryLabel}>合計ストレス</Text>
+                <Text style={styles.chartDetailSummaryValue}>
+                  {selectedDayData.totalStress}
+                </Text>
+              </View>
+
+              {selectedDayData.hasSession && (
+                <View style={styles.chartDetailSession}>
+                  <Ionicons name="checkmark-circle" size={16} color="#805AD5" />
+                  <Text style={styles.chartDetailSessionText}>
+                    この日は瞑想セッションを実施しました
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+
+  /**
+   * 削除確認モーダル
+   */
+  const renderDeleteModal = () => (
+    <Modal
+      visible={deleteModalVisible}
+      animationType="fade"
+      transparent={true}
+      onRequestClose={() => setDeleteModalVisible(false)}
+    >
+      <View style={styles.deleteModalOverlay}>
+        <View style={styles.deleteModalContent}>
+          <Ionicons name="trash-outline" size={40} color="#E53E3E" style={{ marginBottom: 12 }} />
+          <Text style={styles.deleteModalTitle}>削除しますか？</Text>
+          {deletingEvent && (
+            <Text style={styles.deleteModalText} numberOfLines={2}>
+              {deletingEvent.eventSummary}
+            </Text>
+          )}
+          <View style={styles.deleteModalButtons}>
+            <TouchableOpacity
+              style={styles.deleteModalCancelButton}
+              onPress={() => {
+                setDeleteModalVisible(false);
+                setDeletingEvent(null);
+              }}
+            >
+              <Text style={styles.deleteModalCancelText}>キャンセル</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.deleteModalConfirmButton}
+              onPress={handleDeleteConfirm}
+            >
+              <Text style={styles.deleteModalConfirmText}>削除</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
@@ -175,7 +1375,11 @@ export default function AnalysisScreen() {
         {/* ヘッダー */}
         <View style={styles.header}>
           <Text style={styles.title}>分析</Text>
-          <Text style={styles.subtitle}>忙しさと感情の相関</Text>
+          {isConnected && (
+            <Text style={styles.summaryText}>
+              {calendarEvents.length}予定 / {savedClassifications.length}分類済
+            </Text>
+          )}
         </View>
 
         {loading ? (
@@ -184,13 +1388,12 @@ export default function AnalysisScreen() {
             <Text style={styles.loadingText}>データを取得中...</Text>
           </View>
         ) : !isConnected ? (
-          /* 未連携時 */
           <View style={styles.connectContainer}>
             <View style={styles.connectCard}>
               <Ionicons name="calendar-outline" size={48} color="#4299E1" />
               <Text style={styles.connectTitle}>Googleカレンダー連携</Text>
               <Text style={styles.connectDescription}>
-                カレンダーの予定と感情の{'\n'}相関を分析できます
+                カレンダーの予定からストレスを{'\n'}AI分析できます
               </Text>
               <TouchableOpacity
                 style={styles.connectButton}
@@ -206,82 +1409,46 @@ export default function AnalysisScreen() {
                   <Text style={styles.connectButtonText}>Googleでログイン</Text>
                 </LinearGradient>
               </TouchableOpacity>
-              <Text style={styles.connectNote}>
-                ※ カレンダーの読み取りのみ許可されます
-              </Text>
             </View>
           </View>
         ) : (
-          /* 連携済み */
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-          >
-            {/* サマリー */}
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryTitle}>過去30日間</Text>
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryValue}>{calendarEvents.length}</Text>
-                  <Text style={styles.summaryLabel}>予定</Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryValue}>{sessions.length}</Text>
-                  <Text style={styles.summaryLabel}>セッション</Text>
-                </View>
-              </View>
+          <View style={styles.mainContent}>
+            {/* タブナビゲーション */}
+            <View style={styles.tabBar}>
+              {TABS.map((tab) => (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={[
+                    styles.tabItem,
+                    activeTab === tab.key && styles.tabItemActive,
+                  ]}
+                  onPress={() => setActiveTab(tab.key)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={tab.icon as any}
+                    size={18}
+                    color={activeTab === tab.key ? '#805AD5' : '#A0AEC0'}
+                  />
+                  <Text
+                    style={[
+                      styles.tabLabel,
+                      activeTab === tab.key && styles.tabLabelActive,
+                    ]}
+                  >
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
-            {/* 日別データ */}
-            <Text style={styles.sectionTitle}>日別の傾向</Text>
-            {correlationData.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>
-                  セッションデータがありません
-                </Text>
-              </View>
-            ) : (
-              correlationData.map((item) => {
-                const busyLevel = getBusyLevel(item.eventCount);
-                return (
-                  <View key={item.date} style={styles.dayCard}>
-                    <View style={styles.dayHeader}>
-                      <Text style={styles.dayDate}>{formatDate(item.date)}</Text>
-                      <View
-                        style={[
-                          styles.busyBadge,
-                          { backgroundColor: busyLevel.color },
-                        ]}
-                      >
-                        <Text style={styles.busyBadgeText}>{busyLevel.label}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.dayContent}>
-                      <View style={styles.dayRow}>
-                        <Text style={styles.dayLabel}>予定数:</Text>
-                        <Text style={styles.dayValue}>{item.eventCount}件</Text>
-                      </View>
-                      <View style={styles.dayRow}>
-                        <Text style={styles.dayLabel}>セッション前の活性度:</Text>
-                        <Text style={styles.dayValue}>
-                          {item.avgArousalBefore > 0 ? '高め' : '低め'}
-                        </Text>
-                      </View>
-                      {item.avgArousalAfter !== null && (
-                        <View style={styles.dayRow}>
-                          <Text style={styles.dayLabel}>セッション後の活性度:</Text>
-                          <Text style={styles.dayValue}>
-                            {item.avgArousalAfter > 0 ? '高め' : '低め'}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </ScrollView>
+            {renderTabContent()}
+          </View>
         )}
+
+        {renderEditModal()}
+        {renderDeleteModal()}
+        {renderChartDetailModal()}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -295,19 +1462,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: '#4A5568',
   },
-  subtitle: {
-    fontSize: 14,
+  summaryText: {
+    fontSize: 12,
     color: '#718096',
-    marginTop: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -354,11 +1523,6 @@ const styles = StyleSheet.create({
   connectButton: {
     borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#4285F4',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
   },
   connectButtonGradient: {
     flexDirection: 'row',
@@ -372,104 +1536,829 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  connectNote: {
-    fontSize: 12,
-    color: '#A0AEC0',
-    marginTop: 16,
-  },
-  scrollView: {
+  mainContent: {
     flex: 1,
   },
-  scrollContent: {
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    marginHorizontal: 16,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 12,
+  },
+  tabItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 4,
+  },
+  tabItemActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabLabel: {
+    fontSize: 12,
+    color: '#A0AEC0',
+    fontWeight: '500',
+  },
+  tabLabelActive: {
+    color: '#805AD5',
+    fontWeight: '600',
+  },
+  tabContent: {
+    flex: 1,
+  },
+  tabContentContainer: {
     paddingHorizontal: 16,
     paddingBottom: 24,
   },
-  summaryCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
+  classifyButton: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
-  summaryTitle: {
-    fontSize: 14,
-    color: '#718096',
-    marginBottom: 12,
-  },
-  summaryRow: {
+  classifyButtonGradient: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  summaryItem: {
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    gap: 8,
   },
-  summaryValue: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#4A5568',
+  classifyButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
-  summaryLabel: {
-    fontSize: 12,
-    color: '#A0AEC0',
-    marginTop: 4,
+  dateHeader: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginTop: 8,
   },
-  sectionTitle: {
-    fontSize: 16,
+  dateHeaderText: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#4A5568',
-    marginBottom: 12,
-    paddingHorizontal: 4,
   },
-  emptyCard: {
+  eventCard: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  eventHeader: {
+    marginBottom: 8,
+  },
+  eventTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
+  },
+  eventBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  editedBadge: {
+    backgroundColor: '#EDF2F7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  editedBadgeText: {
+    fontSize: 10,
+    color: '#718096',
+  },
+  eventTime: {
+    fontSize: 11,
+    color: '#718096',
+  },
+  eventTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  stressBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stressBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  eventTagsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  eventTags: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  deleteButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  tag: {
+    backgroundColor: '#EDF2F7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagText: {
+    fontSize: 11,
+    color: '#4A5568',
+  },
+  warningTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFAF0',
+    borderWidth: 1,
+    borderColor: '#ED8936',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  warningTagText: {
+    fontSize: 11,
+    color: '#ED8936',
+    fontWeight: '500',
+  },
+  editHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 8,
+    gap: 4,
+  },
+  editHintText: {
+    fontSize: 10,
+    color: '#A0AEC0',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
   },
   emptyText: {
     fontSize: 14,
     color: '#A0AEC0',
+    textAlign: 'center',
+    lineHeight: 22,
   },
-  dayCard: {
+  // チャートスタイル
+  chartContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
   },
-  dayHeader: {
+  chartHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  dayDate: {
-    fontSize: 16,
+  chartTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  chartToggleButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3E8FF',
+  },
+  chartWrapper: {
+    flexDirection: 'row',
+    height: 180,
+  },
+  yAxis: {
+    width: 20,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 4,
+    paddingBottom: 20,
+  },
+  yAxisLabel: {
+    fontSize: 10,
+    color: '#A0AEC0',
+  },
+  barsContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingBottom: 20,
+  },
+  horizontalBarsContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingBottom: 20,
+    paddingRight: 16,
+  },
+  expandedBarsContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  shrunkBarsContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingBottom: 20,
+  },
+  stackedBar: {
+    width: '100%',
+    justifyContent: 'flex-end',
+    gap: 1,
+  },
+  barSegment: {
+    width: '100%',
+    borderRadius: 3,
+    marginBottom: 1,
+  },
+  emptyBar: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 2,
+  },
+  barWrapper: {
+    alignItems: 'center',
+  },
+  barColumn: {
+    width: '60%',
+    height: 140,
+    justifyContent: 'flex-end',
+  },
+  bar: {
+    width: '100%',
+    borderRadius: 4,
+    minHeight: 4,
+  },
+  sessionMarker: {
+    position: 'absolute',
+    bottom: 22,
+  },
+  sessionMarkerText: {
+    fontSize: 8,
+    color: '#805AD5',
+  },
+  barLabel: {
+    fontSize: 9,
+    color: '#A0AEC0',
+    marginTop: 4,
+  },
+  barLabelSmall: {
+    fontSize: 7,
+    color: '#A0AEC0',
+    marginTop: 2,
+    position: 'absolute',
+    bottom: -14,
+  },
+  legend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  legendColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 3,
+  },
+  legendText: {
+    fontSize: 11,
+    color: '#718096',
+  },
+  sessionDot: {
+    fontSize: 10,
+    color: '#805AD5',
+  },
+  chartHint: {
+    fontSize: 11,
+    color: '#A0AEC0',
+    textAlign: 'center',
+    marginTop: 12,
+  },
+  // 相関スタイル
+  correlationCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  correlationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  correlationDate: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#4A5568',
   },
   busyBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
   busyBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#FFFFFF',
   },
-  dayContent: {
-    gap: 8,
+  correlationContent: {
+    gap: 4,
   },
-  dayRow: {
+  correlationRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  dayLabel: {
-    fontSize: 13,
+  correlationLabel: {
+    fontSize: 12,
     color: '#718096',
   },
-  dayValue: {
+  correlationValue: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#4A5568',
+  },
+  // アドバイススタイル
+  adviceContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 16,
+  },
+  adviceTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  adviceDescription: {
+    fontSize: 14,
+    color: '#718096',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  comingSoon: {
+    marginTop: 16,
+    fontSize: 12,
+    color: '#A0AEC0',
+    fontStyle: 'italic',
+  },
+  // AI分析スタイル
+  analyzeButton: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  analyzeButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  analyzeButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  analysisDataInfo: {
+    marginTop: 16,
+    fontSize: 13,
+    color: '#805AD5',
+    fontWeight: '500',
+  },
+  analysisResultContainer: {
+    gap: 12,
+  },
+  analysisCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 16,
+  },
+  analysisCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  analysisCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  analysisSummaryText: {
+    fontSize: 14,
+    color: '#4A5568',
+    lineHeight: 22,
+  },
+  analysisListItem: {
+    flexDirection: 'row',
+    paddingVertical: 6,
+    gap: 8,
+  },
+  analysisListBullet: {
+    fontSize: 14,
+    color: '#805AD5',
+    width: 16,
+  },
+  analysisListText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#4A5568',
+    lineHeight: 20,
+  },
+  analysisTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  analysisRiskTag: {
+    backgroundColor: '#FED7D7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  analysisRiskTagText: {
+    fontSize: 13,
+    color: '#C53030',
+    fontWeight: '500',
+  },
+  // モーダルスタイル
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDF2F7',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  modalBody: {
+    padding: 16,
+  },
+  modalEventTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4A5568',
+    marginBottom: 4,
+  },
+  titleInput: {
+    fontSize: 15,
+    color: '#4A5568',
+    backgroundColor: '#F7FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 4,
+  },
+  modalEventTime: {
+    fontSize: 13,
+    color: '#718096',
+    marginBottom: 20,
+  },
+  modalLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: '#4A5568',
+    marginBottom: 8,
+    marginTop: 16,
+  },
+  optionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  optionButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#EDF2F7',
+  },
+  optionButtonActive: {
+    backgroundColor: '#805AD5',
+  },
+  optionText: {
+    fontSize: 13,
+    color: '#4A5568',
+  },
+  optionTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  stressButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    opacity: 0.6,
+  },
+  stressButtonActive: {
+    opacity: 1,
+    borderWidth: 2,
+    borderColor: '#4A5568',
+  },
+  stressButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  stressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  stressLabelText: {
+    fontSize: 11,
+    color: '#A0AEC0',
+  },
+  // 参加者選択
+  attendeeList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  attendeeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#EDF2F7',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  attendeeChipActive: {
+    backgroundColor: '#805AD5',
+    borderColor: '#805AD5',
+  },
+  attendeeChipText: {
+    fontSize: 13,
+    color: '#4A5568',
+  },
+  attendeeChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  addPersonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  addPersonInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#4A5568',
+    backgroundColor: '#F7FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  addPersonButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#805AD5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addPersonButtonDisabled: {
+    backgroundColor: '#A0AEC0',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    padding: 16,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#EDF2F7',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  saveButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#805AD5',
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // 削除モーダル
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  deleteModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 320,
+  },
+  deleteModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+    marginBottom: 8,
+  },
+  deleteModalText: {
+    fontSize: 14,
+    color: '#718096',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  deleteModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  deleteModalCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#EDF2F7',
+    alignItems: 'center',
+  },
+  deleteModalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  deleteModalConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#E53E3E',
+    alignItems: 'center',
+  },
+  deleteModalConfirmText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // チャート詳細モーダル
+  chartDetailOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  chartDetailContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: '70%',
+  },
+  chartDetailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDF2F7',
+  },
+  chartDetailTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4A5568',
+  },
+  chartDetailBody: {
+    padding: 16,
+  },
+  chartDetailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDF2F7',
+    gap: 12,
+  },
+  chartDetailStressBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chartDetailStressText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  chartDetailEventText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#4A5568',
+  },
+  chartDetailSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+  },
+  chartDetailSummaryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#718096',
+  },
+  chartDetailSummaryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#4A5568',
+  },
+  chartDetailSession: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#F3E8FF',
+    borderRadius: 8,
+  },
+  chartDetailSessionText: {
+    fontSize: 13,
+    color: '#805AD5',
   },
 });

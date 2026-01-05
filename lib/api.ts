@@ -186,8 +186,199 @@ export const getSessionLogQuery = /* GraphQL */ `
 `;
 
 // ========================================
+// EventClassification 関連のクエリ・ミューテーション
+// ========================================
+
+// EventClassification 作成
+export const createEventClassificationMutation = /* GraphQL */ `
+  mutation CreateEventClassification($input: CreateEventClassificationInput!) {
+    createEventClassification(input: $input) {
+      id
+      userId
+      eventId
+      eventSummary
+      eventStart
+      eventEnd
+      participants
+      relationships
+      format
+      eventType
+      stressScore
+      attendeeIds
+      isManuallyEdited
+      source
+      createdAt
+      updatedAt
+      owner
+    }
+  }
+`;
+
+// EventClassification 更新
+export const updateEventClassificationMutation = /* GraphQL */ `
+  mutation UpdateEventClassification($input: UpdateEventClassificationInput!) {
+    updateEventClassification(input: $input) {
+      id
+      userId
+      eventId
+      eventSummary
+      eventStart
+      eventEnd
+      participants
+      relationships
+      format
+      eventType
+      stressScore
+      attendeeIds
+      isManuallyEdited
+      source
+      createdAt
+      updatedAt
+      owner
+    }
+  }
+`;
+
+// EventClassification 削除
+export const deleteEventClassificationMutation = /* GraphQL */ `
+  mutation DeleteEventClassification($input: DeleteEventClassificationInput!) {
+    deleteEventClassification(input: $input) {
+      id
+    }
+  }
+`;
+
+// EventClassification 一覧取得
+export const listEventClassificationsQuery = /* GraphQL */ `
+  query ListEventClassifications($filter: ModelEventClassificationFilterInput, $limit: Int, $nextToken: String) {
+    listEventClassifications(filter: $filter, limit: $limit, nextToken: $nextToken) {
+      items {
+        id
+        userId
+        eventId
+        eventSummary
+        eventStart
+        eventEnd
+        participants
+        relationships
+        format
+        eventType
+        stressScore
+        attendeeIds
+        isManuallyEdited
+        source
+        createdAt
+        updatedAt
+        owner
+      }
+      nextToken
+    }
+  }
+`;
+
+// ========================================
+// Person 関連のクエリ・ミューテーション
+// ========================================
+
+// Person 作成
+export const createPersonMutation = /* GraphQL */ `
+  mutation CreatePerson($input: CreatePersonInput!) {
+    createPerson(input: $input) {
+      id
+      personId
+      name
+      createdAt
+      updatedAt
+      owner
+    }
+  }
+`;
+
+// Person 更新
+export const updatePersonMutation = /* GraphQL */ `
+  mutation UpdatePerson($input: UpdatePersonInput!) {
+    updatePerson(input: $input) {
+      id
+      personId
+      name
+      createdAt
+      updatedAt
+      owner
+    }
+  }
+`;
+
+// Person 削除
+export const deletePersonMutation = /* GraphQL */ `
+  mutation DeletePerson($input: DeletePersonInput!) {
+    deletePerson(input: $input) {
+      id
+    }
+  }
+`;
+
+// Person 一覧取得
+export const listPeopleQuery = /* GraphQL */ `
+  query ListPeople($filter: ModelPersonFilterInput, $limit: Int, $nextToken: String) {
+    listPeople(filter: $filter, limit: $limit, nextToken: $nextToken) {
+      items {
+        id
+        personId
+        name
+        createdAt
+        updatedAt
+        owner
+      }
+      nextToken
+    }
+  }
+`;
+
+// ========================================
 // 型定義
 // ========================================
+
+// EventClassification 型
+export type EventClassificationParticipants = 'solo' | 'small' | 'large';
+export type EventClassificationRelationship = 'family' | 'work' | 'friend' | 'stranger';
+export type EventClassificationFormat = 'online' | 'onsite';
+export type EventClassificationSource = 'ai' | 'manual';
+
+export interface EventClassificationInput {
+  userId: string;
+  eventId: string;
+  eventSummary: string;
+  eventStart: string;
+  eventEnd: string;
+  participants?: EventClassificationParticipants;
+  relationships?: EventClassificationRelationship[] | null;
+  format?: EventClassificationFormat;
+  eventType?: string;
+  stressScore?: number;
+  attendeeIds?: string[] | null;
+  isManuallyEdited?: boolean;
+  source?: EventClassificationSource;
+}
+
+export interface EventClassification extends EventClassificationInput {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: string;
+}
+
+// Person 型
+export interface PersonInput {
+  personId: string;
+  name: string;
+}
+
+export interface Person extends PersonInput {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: string;
+}
 
 export interface SessionLogInput {
   userId: string;
@@ -362,4 +553,130 @@ export async function listSessionLogs(): Promise<SessionLog[]> {
     },
   });
   return (result as any).data.listSessionLogs.items;
+}
+
+// ========================================
+// EventClassification API
+// ========================================
+
+/**
+ * EventClassification を作成
+ */
+export async function createEventClassification(input: EventClassificationInput): Promise<EventClassification> {
+  const result = await getClient().graphql({
+    query: createEventClassificationMutation,
+    variables: { input },
+  });
+  return (result as any).data.createEventClassification;
+}
+
+/**
+ * EventClassification を更新
+ */
+export async function updateEventClassification(
+  id: string,
+  updates: Partial<Omit<EventClassificationInput, 'userId' | 'eventId'>>
+): Promise<EventClassification> {
+  const result = await getClient().graphql({
+    query: updateEventClassificationMutation,
+    variables: {
+      input: {
+        id,
+        ...updates,
+      },
+    },
+  });
+  return (result as any).data.updateEventClassification;
+}
+
+/**
+ * EventClassification を削除
+ */
+export async function deleteEventClassification(id: string): Promise<void> {
+  await getClient().graphql({
+    query: deleteEventClassificationMutation,
+    variables: {
+      input: { id },
+    },
+  });
+}
+
+/**
+ * EventClassification 一覧を取得
+ */
+export async function listEventClassifications(): Promise<EventClassification[]> {
+  const result = await getClient().graphql({
+    query: listEventClassificationsQuery,
+    variables: {},
+  });
+  return (result as any).data.listEventClassifications.items;
+}
+
+/**
+ * 複数のEventClassificationを一括作成
+ */
+export async function batchCreateEventClassifications(
+  inputs: EventClassificationInput[]
+): Promise<EventClassification[]> {
+  const results = await Promise.all(
+    inputs.map((input) => createEventClassification(input))
+  );
+  return results;
+}
+
+// ========================================
+// Person 関連の関数
+// ========================================
+
+/**
+ * Person を作成
+ */
+export async function createPerson(input: PersonInput): Promise<Person> {
+  const result = await getClient().graphql({
+    query: createPersonMutation,
+    variables: { input },
+  });
+  return (result as any).data.createPerson;
+}
+
+/**
+ * Person を更新
+ */
+export async function updatePerson(
+  id: string,
+  updates: Partial<PersonInput>
+): Promise<Person> {
+  const result = await getClient().graphql({
+    query: updatePersonMutation,
+    variables: {
+      input: {
+        id,
+        ...updates,
+      },
+    },
+  });
+  return (result as any).data.updatePerson;
+}
+
+/**
+ * Person を削除
+ */
+export async function deletePerson(id: string): Promise<void> {
+  await getClient().graphql({
+    query: deletePersonMutation,
+    variables: {
+      input: { id },
+    },
+  });
+}
+
+/**
+ * Person 一覧を取得
+ */
+export async function listPeople(): Promise<Person[]> {
+  const result = await getClient().graphql({
+    query: listPeopleQuery,
+    variables: {},
+  });
+  return (result as any).data.listPeople.items;
 }
