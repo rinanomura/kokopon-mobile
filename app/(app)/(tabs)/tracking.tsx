@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -56,6 +56,21 @@ export default function TrackingScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   /**
+   * 最近1週間（今日を含む過去7日間）のセッション数を集計
+   */
+  const weeklyCount = useMemo(() => {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 6); // 今日を含む7日間
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    return sessions.filter(session => {
+      const sessionDate = new Date(session.timestamp);
+      return sessionDate >= sevenDaysAgo;
+    }).length;
+  }, [sessions]);
+
+  /**
    * セッション履歴を取得
    */
   const fetchSessions = useCallback(async () => {
@@ -92,9 +107,9 @@ export default function TrackingScreen() {
         {/* ヘッダー */}
         <View style={styles.header}>
           <Text style={styles.title}>セッション履歴</Text>
-          <Text style={styles.subtitle}>
-            {sessions.length > 0 ? `${sessions.length}件の記録` : ''}
-          </Text>
+          {sessions.length > 0 && (
+            <Text style={styles.subtitle}>全{sessions.length}件の記録</Text>
+          )}
         </View>
 
         {/* ローディング */}
@@ -121,6 +136,16 @@ export default function TrackingScreen() {
               />
             }
           >
+            {/* 最近1週間の利用状況 */}
+            {weeklyCount > 0 && (
+              <View style={styles.weeklySummaryBox}>
+                <Text style={styles.weeklySummaryIcon}>🐾</Text>
+                <Text style={styles.weeklySummaryText}>
+                  最近1週間で{weeklyCount}回、ここに戻ってきました
+                </Text>
+              </View>
+            )}
+
             {sessions.map((session) => (
               <View key={session.id} style={styles.sessionCard}>
                 {/* 日時 */}
@@ -190,6 +215,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
     paddingTop: 20,
     paddingBottom: 16,
@@ -198,11 +226,14 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#4A5568',
+    flex: 1,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#718096',
-    marginTop: 4,
+    position: 'absolute',
+    right: 24,
   },
   loadingContainer: {
     flex: 1,
@@ -233,6 +264,33 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingBottom: 24,
+  },
+  weeklySummaryBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 182, 193, 0.4)',
+    shadowColor: '#FFB6C1',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  weeklySummaryIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  weeklySummaryText: {
+    fontSize: 13,
+    color: '#5A6B7C',
+    fontWeight: '500',
+    lineHeight: 20,
   },
   sessionCard: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',

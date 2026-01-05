@@ -9,7 +9,12 @@ WebBrowser.maybeCompleteAuthSession();
 // 設定値（環境変数から読み込み）
 // ========================================
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID!;
-const GOOGLE_WEB_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET!;
+const GOOGLE_WEB_CLIENT_SECRET = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_SECRET!;
+
+console.log('=== ENV Check ===');
+console.log('CLIENT_ID:', GOOGLE_WEB_CLIENT_ID ? 'SET' : 'MISSING');
+console.log('CLIENT_SECRET:', GOOGLE_WEB_CLIENT_SECRET ? 'SET' : 'MISSING');
+console.log('=================');
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
@@ -24,11 +29,11 @@ const discovery = {
  * Google OAuth 用の設定を取得
  */
 export function useGoogleAuth() {
-  // プラットフォームに応じたリダイレクトURI
-  const redirectUri = Platform.select({
-    web: AuthSession.makeRedirectUri({ preferLocalhost: true }),
-    default: 'https://auth.expo.io/@nobusugahara/koko-pon-mobile',
-  }) as string;
+  // リダイレクトURIを自動生成（Dev Client / Expo Go 両対応）
+  const redirectUri = AuthSession.makeRedirectUri({
+    scheme: 'kokoponmobile',
+    preferLocalhost: Platform.OS === 'web',
+  });
 
   // デバッグ用：リダイレクトURIをコンソールに出力
   console.log('=== Redirect URI ===');
