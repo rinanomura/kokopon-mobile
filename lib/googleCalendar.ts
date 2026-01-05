@@ -6,9 +6,10 @@ import { Platform } from 'react-native';
 WebBrowser.maybeCompleteAuthSession();
 
 // ========================================
-// 設定値（★ Web Client ID をここに設定）
+// 設定値（環境変数から読み込み）
 // ========================================
-const GOOGLE_WEB_CLIENT_ID = '854736505548-iaovmvcgln97d998tivfm83h552n53td.apps.googleusercontent.com'; // ★ 要設定
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID!;
+const GOOGLE_WEB_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET!;
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
@@ -69,6 +70,7 @@ export async function exchangeCodeForToken(
     const tokenResponse = await AuthSession.exchangeCodeAsync(
       {
         clientId: GOOGLE_WEB_CLIENT_ID,
+        clientSecret: GOOGLE_WEB_CLIENT_SECRET, // Web用に必要
         code,
         redirectUri,
         extraParams: {
