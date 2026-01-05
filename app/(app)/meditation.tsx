@@ -31,6 +31,14 @@ const AUDIO_FILES = {
   calm_stay: require('@/assets/sounds/calm_stay_30s.m4a'),
 } as const;
 
+// メニューIDに対応するりなわんGIF
+const MASCOT_GIFS = {
+  release_breath: require('@/assets/images/rinawan_exhaling.gif'),
+  sense_energy: require('@/assets/images/rinawan_feeling_energy.gif'),
+  ground_body: require('@/assets/images/rinawan_putting_body_weight.gif'),
+  calm_stay: require('@/assets/images/rinawan_breathing_eye-closed.gif'),
+} as const;
+
 // メニューIDに対応するUI表示テキスト
 const MENU_UI: Record<MenuId, { title: string; guideText: string }> = {
   release_breath: {
@@ -48,6 +56,24 @@ const MENU_UI: Record<MenuId, { title: string; guideText: string }> = {
   calm_stay: {
     title: '呼吸を感じる30秒',
     guideText: '今の呼吸の出入りを、そのまま感じてみよう。',
+  },
+};
+
+// メニューごとの背景色定義
+const MENU_COLORS: Record<MenuId, {
+  backgroundGradient: [string, string];
+}> = {
+  release_breath: {
+    backgroundGradient: ['#D4A5E8', '#E8D0F0'],  // ピンク寄りの淡い紫
+  },
+  sense_energy: {
+    backgroundGradient: ['#FFB6C1', '#FFDCE4'],  // 現行ピンク（淡め）
+  },
+  ground_body: {
+    backgroundGradient: ['#A5B8E8', '#D0DEF0'],  // ブルー寄りの淡い紫
+  },
+  calm_stay: {
+    backgroundGradient: ['#7AD7C8', '#CDEEF0'],  // グリーン寄りの淡いブルー
   },
 };
 
@@ -118,7 +144,7 @@ export default function MeditationScreen() {
           timestamp: now,
           beforeValence: bx,
           beforeArousal: by,
-          meditationType: 'breathing',
+          meditationType: menuId,
           duration: 30,
         });
 
@@ -248,7 +274,7 @@ export default function MeditationScreen() {
 
   return (
     <LinearGradient
-      colors={['#7AD7F0', '#CDECF6']}
+      colors={MENU_COLORS[menuId].backgroundGradient}
       style={styles.gradient}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -274,7 +300,7 @@ export default function MeditationScreen() {
             {/* りなわんGIF */}
             <View style={styles.mascotContainer}>
               <Image
-                source={require('@/assets/images/rinawan_breathing_eye-closed.gif')}
+                source={MASCOT_GIFS[menuId]}
                 style={styles.mascotImage}
                 resizeMode="contain"
               />

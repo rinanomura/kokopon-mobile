@@ -6,10 +6,12 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { listSessionLogs, SessionLog } from '@/lib/api';
+import { emotionToChipColor, getMissingChipColor } from '@/lib/emotionColor';
 
 /**
  * 活性度を日本語ラベルに変換
@@ -46,6 +48,52 @@ function formatDateTime(isoString: string): string {
 }
 
 /**
+ * メニュー名の定義
+ */
+const MENU_NAMES: Record<string, string> = {
+  release_breath: '呼吸の出口を感じる',
+  sense_energy: '今のエネルギーを感じる',
+  ground_body: '体の重さをあずける',
+  calm_stay: '呼吸を感じる',
+};
+
+/**
+ * 感情座標からmenuIdを推定（旧データ用）
+ */
+function getMenuIdFromEmotion(x: number, y: number): string {
+  // 中央付近は calm_stay
+  const r = Math.sqrt(x * x + y * y);
+  if (r < 0.25) return 'calm_stay';
+
+  const isHighArousal = y < 0; // 画面座標では上がマイナス
+  const isPleasant = x >= 0;
+
+  if (isHighArousal && !isPleasant) return 'release_breath';
+  if (isHighArousal && isPleasant) return 'sense_energy';
+  if (!isHighArousal && !isPleasant) return 'ground_body';
+  return 'calm_stay';
+}
+
+/**
+ * meditationType からメニュー名を取得
+ * 旧データ（breathing）の場合は感情座標から推定
+ */
+function getMenuName(meditationType: string, beforeValence?: number, beforeArousal?: number): string {
+  // 新しいmenuIdの場合
+  if (MENU_NAMES[meditationType]) {
+    return MENU_NAMES[meditationType];
+  }
+
+  // 旧データ（breathing）の場合は感情座標から推定
+  if (meditationType === 'breathing' && beforeValence !== undefined && beforeArousal !== undefined) {
+    const estimatedMenuId = getMenuIdFromEmotion(beforeValence, beforeArousal);
+    return MENU_NAMES[estimatedMenuId] || '呼吸';
+  }
+
+  return meditationType;
+}
+
+/**
  * TrackingScreen - トラッキング画面
  *
  * 過去のセッション履歴を表示
@@ -56,18 +104,39 @@ export default function TrackingScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   /**
-   * 最近1週間（今日を含む過去7日間）のセッション数を集計
+   * 継続を促すメッセージを生成（りなわん口調）
+   * フレンドリーかつ礼儀正しいタメ口
    */
-  const weeklyCount = useMemo(() => {
+  const encouragementMessage = useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return null;
+
+    // 最近1週間のセッション数
     const now = new Date();
     const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 6); // 今日を含む7日間
+    sevenDaysAgo.setDate(now.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    return sessions.filter(session => {
+    const weeklyCount = sessions.filter(session => {
       const sessionDate = new Date(session.timestamp);
       return sessionDate >= sevenDaysAgo;
     }).length;
+
+    // りなわん口調のメッセージ
+    if (total === 1) {
+      return '最初の一歩だね！\nまた会えるの楽しみにしてるよ';
+    }
+    if (total <= 3) {
+      return `${total}回も来てくれたんだね！\nうれしいな`;
+    }
+    if (weeklyCount >= 3) {
+      return `今週${weeklyCount}回も会えたね！\nいつもありがとう`;
+    }
+    if (weeklyCount >= 1) {
+      return 'また会えてうれしいな！\nいつでも待ってるからね';
+    }
+    // 今週0回だが過去にはある
+    return 'ひさしぶり！\nまた気が向いたら遊びに来てね';
   }, [sessions]);
 
   /**
@@ -107,9 +176,6 @@ export default function TrackingScreen() {
         {/* ヘッダー */}
         <View style={styles.header}>
           <Text style={styles.title}>セッション履歴</Text>
-          {sessions.length > 0 && (
-            <Text style={styles.subtitle}>全{sessions.length}件の記録</Text>
-          )}
         </View>
 
         {/* ローディング */}
@@ -136,36 +202,63 @@ export default function TrackingScreen() {
               />
             }
           >
-            {/* 最近1週間の利用状況 */}
-            {weeklyCount > 0 && (
-              <View style={styles.weeklySummaryBox}>
-                <Text style={styles.weeklySummaryIcon}>🐾</Text>
-                <Text style={styles.weeklySummaryText}>
-                  最近1週間で{weeklyCount}回、ここに戻ってきました
-                </Text>
+            {/* りなわんと継続メッセージ */}
+            {encouragementMessage && (
+              <View style={styles.mascotSection}>
+                <Image
+                  source={require('@/assets/images/rinawan_talking.gif')}
+                  style={styles.mascotImage}
+                  resizeMode="contain"
+                />
+                <View style={styles.speechBubbleContainer}>
+                  <View style={styles.speechBubbleTail} />
+                  <LinearGradient
+                    colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.speechBubble}
+                  >
+                    {/* キラキラ装飾 */}
+                    <Text style={[styles.sparkle, styles.sparkleTopRight]}>✧</Text>
+                    <Text style={[styles.sparkle, styles.sparkleTopLeft]}>✦</Text>
+                    <Text style={[styles.sparkle, styles.sparkleBottomRight]}>⋆</Text>
+                    <Text style={styles.speechBubbleText}>
+                      {encouragementMessage}
+                    </Text>
+                  </LinearGradient>
+                </View>
               </View>
             )}
 
             {sessions.map((session) => (
               <View key={session.id} style={styles.sessionCard}>
-                {/* 日時 */}
+                {/* 補助情報：日時（右上） */}
                 <Text style={styles.sessionDate}>
-                  {formatDateTime(session.timestamp)}
+                  実施日時: {formatDateTime(session.timestamp)}
                 </Text>
 
-                {/* Before / After */}
+                {/* 主情報：Before → After */}
                 <View style={styles.emotionRow}>
                   {/* Before */}
                   <View style={styles.emotionBlock}>
-                    <Text style={styles.emotionLabel}>はじめ</Text>
-                    <View style={styles.emotionValues}>
-                      <Text style={styles.emotionValue}>
-                        {getValenceLabel(session.beforeValence)}
-                      </Text>
-                      <Text style={styles.emotionDivider}>・</Text>
-                      <Text style={styles.emotionValue}>
-                        活性{getArousalLabel(session.beforeArousal)}
-                      </Text>
+                    <Text style={styles.emotionLabel}>Before</Text>
+                    <View style={styles.chipRow}>
+                      <View style={[
+                        styles.chip,
+                        { backgroundColor: emotionToChipColor(session.beforeValence, session.beforeArousal) }
+                      ]}>
+                        <Text style={styles.chipText}>
+                          {getValenceLabel(session.beforeValence)}
+                        </Text>
+                      </View>
+                      <View style={[
+                        styles.chip,
+                        { backgroundColor: emotionToChipColor(session.beforeValence, session.beforeArousal) }
+                      ]}>
+                        <Text style={styles.chipText}>
+                          活性{getArousalLabel(session.beforeArousal)}
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
@@ -173,31 +266,42 @@ export default function TrackingScreen() {
                   <Text style={styles.arrow}>→</Text>
 
                   {/* After */}
-                  <View style={styles.emotionBlock}>
-                    <Text style={styles.emotionLabel}>あと</Text>
+                  <View style={[styles.emotionBlock, styles.emotionBlockRight]}>
+                    <Text style={styles.emotionLabel}>After</Text>
                     {session.afterValence !== null && session.afterValence !== undefined ? (
-                      <View style={styles.emotionValues}>
-                        <Text style={styles.emotionValue}>
-                          {getValenceLabel(session.afterValence)}
-                        </Text>
-                        <Text style={styles.emotionDivider}>・</Text>
-                        <Text style={styles.emotionValue}>
-                          活性{getArousalLabel(session.afterArousal ?? 0)}
-                        </Text>
+                      <View style={styles.chipRow}>
+                        <View style={[
+                          styles.chip,
+                          { backgroundColor: emotionToChipColor(session.afterValence, session.afterArousal ?? 0) }
+                        ]}>
+                          <Text style={styles.chipText}>
+                            {getValenceLabel(session.afterValence)}
+                          </Text>
+                        </View>
+                        <View style={[
+                          styles.chip,
+                          { backgroundColor: emotionToChipColor(session.afterValence, session.afterArousal ?? 0) }
+                        ]}>
+                          <Text style={styles.chipText}>
+                            活性{getArousalLabel(session.afterArousal ?? 0)}
+                          </Text>
+                        </View>
                       </View>
                     ) : (
-                      <Text style={styles.emotionValueMissing}>未記録</Text>
+                      <View style={styles.chipRow}>
+                        <View style={[styles.chip, { backgroundColor: getMissingChipColor() }]}>
+                          <Text style={styles.chipMissingText}>未記録</Text>
+                        </View>
+                      </View>
                     )}
                   </View>
                 </View>
 
-                {/* 瞑想タイプ・時間 */}
-                <View style={styles.sessionMeta}>
-                  <Text style={styles.sessionMetaText}>
-                    {session.meditationType === 'breathing' ? '呼吸' : session.meditationType}
-                    {session.duration ? ` ${session.duration}秒` : ''}
-                  </Text>
-                </View>
+                {/* 副情報：トレーニング名・時間 */}
+                <Text style={styles.sessionMeta}>
+                  {getMenuName(session.meditationType, session.beforeValence, session.beforeArousal)}
+                  {session.duration ? ` ${session.duration}秒` : ''}
+                </Text>
               </View>
             ))}
           </ScrollView>
@@ -215,9 +319,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 24,
     paddingTop: 20,
     paddingBottom: 16,
@@ -226,14 +328,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#4A5568',
-    flex: 1,
     textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#718096',
-    position: 'absolute',
-    right: 24,
   },
   loadingContainer: {
     flex: 1,
@@ -265,35 +360,82 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 24,
   },
-  weeklySummaryBox: {
+  mascotSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    marginTop: 8,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 182, 193, 0.4)',
+    paddingHorizontal: 8,
+  },
+  mascotImage: {
+    width: 70,
+    height: 70,
+  },
+  speechBubbleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  speechBubbleTail: {
+    width: 0,
+    height: 0,
+    borderTopWidth: 8,
+    borderBottomWidth: 8,
+    borderRightWidth: 10,
+    borderTopColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderRightColor: '#FFF5F7',
+    marginRight: -1,
+  },
+  speechBubble: {
+    flex: 1,
+    position: 'relative',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 182, 193, 0.5)',
     shadowColor: '#FFB6C1',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.2,
     shadowRadius: 6,
-    elevation: 2,
+    elevation: 3,
   },
-  weeklySummaryIcon: {
+  sparkle: {
+    position: 'absolute',
+    fontSize: 14,
+    color: '#FF69B4',
+    textShadowColor: '#FF69B4',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+  },
+  sparkleTopRight: {
+    top: -8,
+    right: -6,
     fontSize: 16,
-    marginRight: 8,
   },
-  weeklySummaryText: {
-    fontSize: 13,
+  sparkleTopLeft: {
+    top: 0,
+    left: -10,
+    fontSize: 14,
+    color: '#FF85A2',
+  },
+  sparkleBottomRight: {
+    bottom: -6,
+    right: -2,
+    fontSize: 12,
+    color: '#FFB6C1',
+  },
+  speechBubbleText: {
+    fontSize: 12,
     color: '#5A6B7C',
-    fontWeight: '500',
-    lineHeight: 20,
+    fontWeight: '600',
+    lineHeight: 18,
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
   sessionCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -302,56 +444,61 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
+    position: 'relative',
   },
   sessionDate: {
-    fontSize: 13,
-    color: '#718096',
-    marginBottom: 12,
+    position: 'absolute',
+    top: 12,
+    right: 16,
+    fontSize: 11,
+    color: '#A0AEC0',
   },
   emotionRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    marginTop: 20,
   },
   emotionBlock: {
     flex: 1,
   },
+  emotionBlockRight: {
+    alignItems: 'flex-end',
+  },
   emotionLabel: {
     fontSize: 11,
-    color: '#A0AEC0',
-    marginBottom: 4,
+    color: '#718096',
+    marginBottom: 6,
   },
-  emotionValues: {
+  chipRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
   },
-  emotionValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#4A5568',
+  chip: {
+    borderRadius: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
-  emotionDivider: {
-    fontSize: 14,
-    color: '#CBD5E0',
-    marginHorizontal: 4,
+  chipText: {
+    fontSize: 12,
+    color: '#5A6B7C',
+    fontWeight: '500',
   },
-  emotionValueMissing: {
-    fontSize: 14,
+  chipMissingText: {
+    fontSize: 12,
     color: '#A0AEC0',
+    fontWeight: '500',
   },
   arrow: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#CBD5E0',
-    marginHorizontal: 12,
+    marginHorizontal: 8,
+    marginTop: 24,
   },
   sessionMeta: {
     marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#EDF2F7',
-  },
-  sessionMetaText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#A0AEC0',
   },
 });

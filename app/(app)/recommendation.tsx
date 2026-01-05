@@ -18,6 +18,34 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 // メニュー定義
 type MenuId = 'release_breath' | 'sense_energy' | 'ground_body' | 'calm_stay';
 
+// メニューごとのカラー定義
+const MENU_COLORS: Record<MenuId, {
+  backgroundGradient: [string, string];
+  cardGradient: [string, string];
+  shadowColor: string;
+}> = {
+  release_breath: {
+    backgroundGradient: ['#D4A5E8', '#E8D0F0'],  // ピンク寄りの淡い紫
+    cardGradient: ['#B07CC8', '#C9A0D8'],        // 背景より濃いめの紫
+    shadowColor: '#B07CC8',
+  },
+  sense_energy: {
+    backgroundGradient: ['#FFB6C1', '#FFDCE4'],  // 現行ピンク（淡め）
+    cardGradient: ['#FF85A2', '#FFB6C1'],        // 現行ピンク（濃いめ）
+    shadowColor: '#FF85A2',
+  },
+  ground_body: {
+    backgroundGradient: ['#A5B8E8', '#D0DEF0'],  // ブルー寄りの淡い紫
+    cardGradient: ['#7A8FC8', '#A0B8D8'],        // 背景より濃いめの青紫
+    shadowColor: '#7A8FC8',
+  },
+  calm_stay: {
+    backgroundGradient: ['#7AD7C8', '#CDEEF0'],  // グリーン寄りの淡いブルー
+    cardGradient: ['#5ABFB0', '#8AD7C8'],        // 背景より濃いめの青緑
+    shadowColor: '#5ABFB0',
+  },
+};
+
 const MENU_DATA: Record<MenuId, {
   title: string;
   description: string;
@@ -85,12 +113,12 @@ export default function RecommendationScreen() {
   }>();
 
   // EmotionPoint から適切なメニューを選択
-  const { menu, menuId } = useMemo(() => {
+  const { menu, menuId, colors } = useMemo(() => {
     const x = parseFloat(params.beforeX || '0');
     const y = parseFloat(params.beforeY || '0');
     const r = parseFloat(params.beforeR || '0');
     const id = getMenuId(x, y, r);
-    return { menu: MENU_DATA[id], menuId: id };
+    return { menu: MENU_DATA[id], menuId: id, colors: MENU_COLORS[id] };
   }, [params.beforeX, params.beforeY, params.beforeR]);
 
   /**
@@ -114,7 +142,7 @@ export default function RecommendationScreen() {
 
   return (
     <LinearGradient
-      colors={['#7AD7F0', '#CDECF6']}
+      colors={colors.backgroundGradient}
       style={styles.gradient}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -151,19 +179,16 @@ export default function RecommendationScreen() {
           <TouchableOpacity
             onPress={handleStart}
             activeOpacity={0.8}
-            style={styles.trainingCardWrapper}
+            style={[styles.trainingCardWrapper, { shadowColor: colors.shadowColor }]}
           >
             <LinearGradient
-              colors={['#FF85A2', '#FFB6C1']}
+              colors={colors.cardGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.trainingCard}
             >
               <Text style={styles.trainingTitle}>
                 {menu.title}
-              </Text>
-              <Text style={styles.trainingDescription}>
-                {menu.description}
               </Text>
               <View style={styles.tapHintContainer}>
                 <Ionicons
@@ -259,8 +284,7 @@ const styles = StyleSheet.create({
   trainingCardWrapper: {
     width: '100%',
     borderRadius: 20,
-    // やさしい影
-    shadowColor: '#FF85A2',
+    // やさしい影（shadowColorは動的に適用）
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
