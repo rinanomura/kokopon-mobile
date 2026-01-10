@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { createSessionLog, getUserId } from '@/lib/api';
+import { useHeadphoneDetection } from '@/hooks/useHeadphoneDetection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -23,12 +24,23 @@ const MEDITATION_DURATION = 30;
 // メニューIDの型定義
 type MenuId = 'release_breath' | 'sense_energy' | 'ground_body' | 'calm_stay';
 
-// メニューIDに対応する音声ファイル
-const AUDIO_FILES = {
+// 音声ガイドの種類
+type VoiceType = 'rina' | 'rinawan';
+
+// メニューIDに対応する音声ファイル（りなさんの声）
+const AUDIO_FILES_RINA = {
   release_breath: require('@/assets/sounds/release_breath_30s.m4a'),
   sense_energy: require('@/assets/sounds/sense_energy_30s.m4a'),
   ground_body: require('@/assets/sounds/ground_body_30s.m4a'),
   calm_stay: require('@/assets/sounds/calm_stay_30s.m4a'),
+} as const;
+
+// メニューIDに対応する音声ファイル（りなわんの声）
+const AUDIO_FILES_RINAWAN = {
+  release_breath: require('@/assets/sounds/rinawan_release_breath_30s.mp3'),
+  sense_energy: require('@/assets/sounds/rinawan_sense_energy_30s.mp3'),
+  ground_body: require('@/assets/sounds/rinawan_ground_body_30s.mp3'),
+  calm_stay: require('@/assets/sounds/rinawan_calm_stay_30s.mp3'),
 } as const;
 
 // メニューIDに対応するりなわんGIF
@@ -110,6 +122,11 @@ export default function MeditationScreen() {
   // 音声ガイドの状態
   const [audioGuideActive, setAudioGuideActive] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState<VoiceType>('rinawan');
+
+  // ヘッドフォン接続検出
+  const isHeadphoneConnected = useHeadphoneDetection();
+  const autoPlayTriggeredRef = useRef(false);
 
   // SessionLog ID（瞑想開始時に作成）
   const sessionIdRef = useRef<string | null>(null);
@@ -220,17 +237,10 @@ export default function MeditationScreen() {
   };
 
   /**
-   * 音声ガイドボタンのハンドラ
+   * 音声ガイドを再生する（共通ロジック）
    */
-  const handleAudioGuide = async () => {
-    // すでに再生中なら停止
-    if (audioGuideActive && soundRef.current) {
-      await soundRef.current.stopAsync();
-      await soundRef.current.unloadAsync();
-      soundRef.current = null;
-      setAudioGuideActive(false);
-      return;
-    }
+  const playAudioGuide = useCallback(async () => {
+    if (audioGuideActive || audioLoading) return;
 
     try {
       setAudioLoading(true);
@@ -242,9 +252,10 @@ export default function MeditationScreen() {
         staysActiveInBackground: false,
       });
 
-      // メニューIDに対応する音声ファイルを読み込み・再生
-      const audioFile = AUDIO_FILES[menuId];
-      console.log('音声ガイド開始:', menuId);
+      // 選択された声に対応する音声ファイルを読み込み・再生
+      const audioFiles = selectedVoice === 'rina' ? AUDIO_FILES_RINA : AUDIO_FILES_RINAWAN;
+      const audioFile = audioFiles[menuId];
+      console.log('音声ガイド開始:', menuId, '声:', selectedVoice);
       const { sound } = await Audio.Sound.createAsync(
         audioFile,
         { shouldPlay: true, volume: 1.0 }
@@ -267,7 +278,48 @@ export default function MeditationScreen() {
       setAudioLoading(false);
       setAudioGuideActive(false);
     }
+  }, [audioGuideActive, audioLoading, selectedVoice, menuId]);
+
+  /**
+   * 音声ガイドを停止する
+   */
+  const stopAudioGuide = useCallback(async () => {
+    if (soundRef.current) {
+      await soundRef.current.stopAsync();
+      await soundRef.current.unloadAsync();
+      soundRef.current = null;
+      setAudioGuideActive(false);
+    }
+  }, []);
+
+  /**
+   * 音声ガイドボタンのハンドラ
+   */
+  const handleAudioGuide = async () => {
+    // すでに再生中なら停止
+    if (audioGuideActive && soundRef.current) {
+      await stopAudioGuide();
+      return;
+    }
+
+    await playAudioGuide();
   };
+
+  /**
+   * ヘッドフォン接続時の自動再生
+   */
+  useEffect(() => {
+    // 一度だけ自動再生（ヘッドフォン接続中で、まだ再生していない場合）
+    if (isHeadphoneConnected && !autoPlayTriggeredRef.current && !audioGuideActive) {
+      autoPlayTriggeredRef.current = true;
+      // 少し遅延させて画面表示後に再生
+      const timer = setTimeout(() => {
+        console.log('ヘッドフォン検出: 音声ガイド自動再生');
+        playAudioGuide();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isHeadphoneConnected, audioGuideActive, playAudioGuide]);
 
   // プログレスの割合（0〜1）
   const progress = elapsed / MEDITATION_DURATION;
@@ -330,8 +382,48 @@ export default function MeditationScreen() {
             </View>
           </View>
 
-          {/* フッター：音声ガイドボタン */}
+          {/* フッター：音声ガイド */}
           <View style={styles.footer}>
+            {/* 声の選択 */}
+            {!audioGuideActive && !audioLoading && (
+              <View style={styles.voiceSelector}>
+                <Text style={styles.voiceSelectorLabel}>音声ガイドの声：</Text>
+                <View style={styles.voiceButtons}>
+                  <TouchableOpacity
+                    onPress={() => setSelectedVoice('rinawan')}
+                    style={[
+                      styles.voiceButton,
+                      selectedVoice === 'rinawan' && styles.voiceButtonSelected,
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[
+                      styles.voiceButtonText,
+                      selectedVoice === 'rinawan' && styles.voiceButtonTextSelected,
+                    ]}>
+                      りなわん
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setSelectedVoice('rina')}
+                    style={[
+                      styles.voiceButton,
+                      selectedVoice === 'rina' && styles.voiceButtonSelected,
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[
+                      styles.voiceButtonText,
+                      selectedVoice === 'rina' && styles.voiceButtonTextSelected,
+                    ]}>
+                      りなさん
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* 再生ボタン */}
             {audioLoading ? (
               <Text style={styles.audioGuideHint}>
                 読み込み中...
@@ -446,6 +538,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 24,
     alignItems: 'center',
+  },
+  voiceSelector: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  voiceSelectorLabel: {
+    fontSize: 12,
+    color: '#718096',
+    marginBottom: 8,
+  },
+  voiceButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  voiceButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  voiceButtonSelected: {
+    backgroundColor: 'rgba(255, 133, 162, 0.2)',
+    borderColor: '#FF85A2',
+  },
+  voiceButtonText: {
+    fontSize: 13,
+    color: '#718096',
+    fontWeight: '500',
+  },
+  voiceButtonTextSelected: {
+    color: '#FF85A2',
+    fontWeight: '600',
   },
   audioGuideButton: {
     fontSize: 14,

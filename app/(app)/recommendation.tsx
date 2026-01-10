@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   Image,
   TouchableOpacity,
   Dimensions,
+  Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -121,6 +123,64 @@ export default function RecommendationScreen() {
     return { menu: MENU_DATA[id], menuId: id, colors: MENU_COLORS[id] };
   }, [params.beforeX, params.beforeY, params.beforeR]);
 
+  // アニメーション用の値
+  const mascotOpacity = useRef(new Animated.Value(0)).current;
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardTranslateY = useRef(new Animated.Value(30)).current;
+  const cardScale = useRef(new Animated.Value(1)).current;
+
+  // 入場アニメーション
+  useEffect(() => {
+    // りなわん＆吹き出しをフェードイン
+    Animated.timing(mascotOpacity, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+
+    // 少し遅れてカードを表示
+    const cardTimer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(cardOpacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardTranslateY, {
+          toValue: 0,
+          duration: 400,
+          easing: Easing.out(Easing.back(1.2)),
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        // カード表示後、パルスアニメーション開始
+        startPulseAnimation();
+      });
+    }, 800);
+
+    return () => clearTimeout(cardTimer);
+  }, []);
+
+  // パルスアニメーション（タップを促す）
+  const startPulseAnimation = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(cardScale, {
+          toValue: 1.02,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardScale, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  };
+
   /**
    * トレーニングカードをタップしたときのハンドラ
    * ⑤瞑想実行画面へ遷移（beforePoint を引き継ぐ）
@@ -155,53 +215,66 @@ export default function RecommendationScreen() {
             今のあなたにおすすめのトレーニング
           </Text>
 
-          {/* 吹き出し（りなわんのセリフ） */}
-          <View style={styles.speechBubbleContainer}>
-            <View style={styles.speechBubble}>
-              <Text style={styles.speechBubbleText}>
-                {menu.bubbleText}
-              </Text>
-            </View>
-            {/* 吹き出しの尻尾（下向き三角） */}
-            <View style={styles.speechBubbleTail} />
-          </View>
-
-          {/* りなわん（マスコット） */}
-          <View style={styles.mascotContainer}>
-            <Image
-              source={require('@/assets/images/rinawan_talking.gif')}
-              style={styles.mascotImage}
-              resizeMode="contain"
-            />
-          </View>
-
-          {/* トレーニングカード（ボタン化） */}
-          <TouchableOpacity
-            onPress={handleStart}
-            activeOpacity={0.8}
-            style={[styles.trainingCardWrapper, { shadowColor: colors.shadowColor }]}
-          >
-            <LinearGradient
-              colors={colors.cardGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.trainingCard}
-            >
-              <Text style={styles.trainingTitle}>
-                {menu.title}
-              </Text>
-              <View style={styles.tapHintContainer}>
-                <Ionicons
-                  name="sparkles"
-                  size={14}
-                  color="rgba(255, 255, 255, 0.8)"
-                />
-                <Text style={styles.tapHint}>
-                  タップして開始
+          {/* りなわん＆吹き出し（フェードイン） */}
+          <Animated.View style={{ opacity: mascotOpacity }}>
+            {/* 吹き出し（りなわんのセリフ） */}
+            <View style={styles.speechBubbleContainer}>
+              <View style={styles.speechBubble}>
+                <Text style={styles.speechBubbleText}>
+                  {menu.bubbleText}
                 </Text>
               </View>
-            </LinearGradient>
-          </TouchableOpacity>
+              {/* 吹き出しの尻尾（下向き三角） */}
+              <View style={styles.speechBubbleTail} />
+            </View>
+
+            {/* りなわん（マスコット） */}
+            <View style={styles.mascotContainer}>
+              <Image
+                source={require('@/assets/images/rinawan_talking.gif')}
+                style={styles.mascotImage}
+                resizeMode="contain"
+              />
+            </View>
+          </Animated.View>
+
+          {/* トレーニングカード（遅延表示＆パルスアニメーション） */}
+          <Animated.View
+            style={{
+              opacity: cardOpacity,
+              transform: [
+                { translateY: cardTranslateY },
+                { scale: cardScale },
+              ],
+            }}
+          >
+            <TouchableOpacity
+              onPress={handleStart}
+              activeOpacity={0.8}
+              style={[styles.trainingCardWrapper, { shadowColor: colors.shadowColor }]}
+            >
+              <LinearGradient
+                colors={colors.cardGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.trainingCard}
+              >
+                <Text style={styles.trainingTitle}>
+                  {menu.title}
+                </Text>
+                <View style={styles.tapHintContainer}>
+                  <Ionicons
+                    name="sparkles"
+                    size={14}
+                    color="rgba(255, 255, 255, 0.8)"
+                  />
+                  <Text style={styles.tapHint}>
+                    タップして開始
+                  </Text>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
