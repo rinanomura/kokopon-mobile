@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { createSessionLog, getUserId } from '@/lib/api';
+import { useHeadphoneDetection } from '@/hooks/useHeadphoneDetection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -122,6 +123,10 @@ export default function MeditationScreen() {
   const [audioGuideActive, setAudioGuideActive] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<VoiceType>('rinawan');
+
+  // ヘッドフォン接続検出
+  const isHeadphoneConnected = useHeadphoneDetection();
+  const autoPlayTriggeredRef = useRef(false);
 
   // SessionLog ID（瞑想開始時に作成）
   const sessionIdRef = useRef<string | null>(null);
@@ -299,6 +304,22 @@ export default function MeditationScreen() {
 
     await playAudioGuide();
   };
+
+  /**
+   * ヘッドフォン接続時の自動再生
+   */
+  useEffect(() => {
+    // 一度だけ自動再生（ヘッドフォン接続中で、まだ再生していない場合）
+    if (isHeadphoneConnected && !autoPlayTriggeredRef.current && !audioGuideActive) {
+      autoPlayTriggeredRef.current = true;
+      // 少し遅延させて画面表示後に再生
+      const timer = setTimeout(() => {
+        console.log('ヘッドフォン検出: 音声ガイド自動再生');
+        playAudioGuide();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isHeadphoneConnected, audioGuideActive, playAudioGuide]);
 
   // プログレスの割合（0〜1）
   const progress = elapsed / MEDITATION_DURATION;
