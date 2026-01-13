@@ -281,8 +281,22 @@ export default function AnalysisScreen() {
       const userId = await getUserId();
       const classified = await classifyCalendarEvents(unclassifiedEvents);
 
+      // 保存直前に最新の分類済みリストを再取得して重複を防ぐ
+      const latestClassifications = await listEventClassifications();
+      const latestClassifiedIds = new Set(latestClassifications.map(c => c.eventId));
+
+      // まだ保存されていないイベントのみをフィルタリング
+      const newClassified = classified.filter(event => !latestClassifiedIds.has(event.id));
+
+      if (newClassified.length === 0) {
+        // 全て既に保存済みだった場合はstateを更新して終了
+        setSavedClassifications(latestClassifications);
+        Alert.alert('情報', 'すべてのイベントは既に分類済みです');
+        return;
+      }
+
       // DBに保存
-      const inputs = classified.map((event) => ({
+      const inputs = newClassified.map((event) => ({
         userId,
         eventId: event.id,
         eventSummary: event.summary,
@@ -298,7 +312,9 @@ export default function AnalysisScreen() {
       }));
 
       const saved = await batchCreateEventClassifications(inputs);
-      setSavedClassifications(prev => [...prev, ...saved]);
+
+      // 最新のリストに新しく保存したものを追加
+      setSavedClassifications([...latestClassifications, ...saved]);
 
       Alert.alert('完了', `${saved.length}件のイベントを分類しました`);
     } catch (error) {
@@ -579,17 +595,71 @@ export default function AnalysisScreen() {
   }, [sessions, eventCountByDate]);
 
   /**
-   * 日付でグループ化した分類データ
+   * 全イベント（分類済み + 未分類）を日付でグループ化
+   * 未分類のイベントはデフォルト値で表示
    */
   const groupedByDate = useMemo(() => {
     const groups: Record<string, EventClassification[]> = {};
 
+    // 重複を防ぐため、eventIdごとに最新のものだけを保持
+    const latestByEventId = new Map<string, EventClassification>();
+
+    // 各eventIdについて最新のレコード（updatedAtが最新）を選択
     savedClassifications.forEach((event) => {
+      const existing = latestByEventId.get(event.eventId);
+      if (!existing) {
+        latestByEventId.set(event.eventId, event);
+      } else {
+        // updatedAtで比較して新しい方を保持
+        const existingDate = new Date(existing.updatedAt || existing.createdAt || 0);
+        const currentDate = new Date(event.updatedAt || event.createdAt || 0);
+        if (currentDate > existingDate) {
+          latestByEventId.set(event.eventId, event);
+        }
+      }
+    });
+
+    // 分類済みイベントのIDをセットに
+    const classifiedEventIds = new Set(latestByEventId.keys());
+
+    // 分類済みイベントを追加（重複なし、最新のみ）
+    latestByEventId.forEach((event) => {
       const dateKey = getDateKey(event.eventStart);
       if (!groups[dateKey]) {
         groups[dateKey] = [];
       }
       groups[dateKey].push(event);
+    });
+
+    // 未分類のカレンダーイベントもデフォルト値で追加
+    calendarEvents.forEach((event) => {
+      if (!classifiedEventIds.has(event.id)) {
+        const startStr = event.start.dateTime || event.start.date || '';
+        const endStr = event.end.dateTime || event.end.date || '';
+        const dateKey = getDateKey(startStr);
+        if (!groups[dateKey]) {
+          groups[dateKey] = [];
+        }
+        // 未分類イベントをデフォルト分類で追加
+        groups[dateKey].push({
+          id: `unclassified-${event.id}`,
+          userId: '',
+          eventId: event.id,
+          eventSummary: event.summary,
+          eventStart: startStr,
+          eventEnd: endStr,
+          participants: null,
+          relationships: null,
+          format: null,
+          eventType: null,
+          stressScore: null,
+          isManuallyEdited: false,
+          attendeeIds: null,
+          source: 'manual',
+          createdAt: '',
+          updatedAt: '',
+        } as unknown as EventClassification);
+      }
     });
 
     // 各グループ内を時間順にソート
@@ -601,7 +671,7 @@ export default function AnalysisScreen() {
     return Object.entries(groups)
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([date, events]) => ({ date, events }));
-  }, [savedClassifications]);
+  }, [savedClassifications, calendarEvents]);
 
   /**
    * 未分類のイベント数
@@ -651,86 +721,105 @@ export default function AnalysisScreen() {
               </View>
 
               {/* イベントカード */}
-              {events.map((event) => (
-                <TouchableOpacity
-                  key={event.id}
-                  style={styles.eventCard}
-                  onPress={() => handleEditStart(event)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.eventHeader}>
-                    <View style={styles.eventTitleRow}>
-                      <Text style={styles.eventTime}>
-                        {formatTimeRange(event.eventStart, event.eventEnd)}
-                      </Text>
-                      <View style={styles.eventBadges}>
-                        {event.isManuallyEdited && (
-                          <View style={styles.editedBadge}>
-                            <Text style={styles.editedBadgeText}>編集済</Text>
-                          </View>
-                        )}
-                        <View
-                          style={[
-                            styles.stressBadge,
-                            { backgroundColor: getStressColor(event.stressScore || 3) },
-                          ]}
-                        >
-                          <Text style={styles.stressBadgeText}>
-                            {event.stressScore || '-'}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                    <Text style={styles.eventTitle} numberOfLines={1}>
-                      {event.eventSummary}
-                    </Text>
-                  </View>
-                  <View style={styles.eventTagsRow}>
-                    <View style={styles.eventTags}>
-                      <View style={styles.tag}>
-                        <Text style={styles.tagText}>
-                          {getParticipantsLabel(event.participants)}
+              {events.map((event) => {
+                const isUnclassified = event.stressScore === null;
+                return (
+                  <TouchableOpacity
+                    key={event.id}
+                    style={[styles.eventCard, isUnclassified && styles.eventCardUnclassified]}
+                    onPress={() => !isUnclassified && handleEditStart(event)}
+                    activeOpacity={isUnclassified ? 1 : 0.7}
+                  >
+                    <View style={styles.eventHeader}>
+                      <View style={styles.eventTitleRow}>
+                        <Text style={styles.eventTime}>
+                          {formatTimeRange(event.eventStart, event.eventEnd)}
                         </Text>
-                      </View>
-                      {/* 一人以外の場合のみ関係性を表示 */}
-                      {event.participants !== 'solo' && (
-                        event.relationships && event.relationships.length > 0 ? (
-                          event.relationships.map((rel, idx) => (
-                            <View key={idx} style={styles.tag}>
-                              <Text style={styles.tagText}>
-                                {getRelationshipLabel(rel)}
+                        <View style={styles.eventBadges}>
+                          {event.isManuallyEdited && (
+                            <View style={styles.editedBadge}>
+                              <Text style={styles.editedBadgeText}>編集済</Text>
+                            </View>
+                          )}
+                          {isUnclassified ? (
+                            <View style={styles.unclassifiedBadge}>
+                              <Text style={styles.unclassifiedBadgeText}>未分類</Text>
+                            </View>
+                          ) : (
+                            <View
+                              style={[
+                                styles.stressBadge,
+                                { backgroundColor: getStressColor(event.stressScore || 3) },
+                              ]}
+                            >
+                              <Text style={styles.stressBadgeText}>
+                                {event.stressScore}
                               </Text>
                             </View>
-                          ))
-                        ) : (
-                          <View style={styles.warningTag}>
-                            <Ionicons name="alert-circle" size={12} color="#ED8936" />
-                            <Text style={styles.warningTagText}>関係性を設定</Text>
-                          </View>
-                        )
-                      )}
-                      {/* 一人以外の場合のみ形式を表示 */}
-                      {event.participants !== 'solo' && (
-                        <View style={styles.tag}>
-                          <Text style={styles.tagText}>
-                            {getFormatLabel(event.format)}
-                          </Text>
+                          )}
                         </View>
+                      </View>
+                      <Text style={styles.eventTitle} numberOfLines={1}>
+                        {event.eventSummary}
+                      </Text>
+                    </View>
+                    <View style={styles.eventTagsRow}>
+                      <View style={styles.eventTags}>
+                        {isUnclassified ? (
+                          <Text style={styles.unclassifiedHint}>
+                            AIで分析するとストレススコアが付きます
+                          </Text>
+                        ) : (
+                          <>
+                            <View style={styles.tag}>
+                              <Text style={styles.tagText}>
+                                {getParticipantsLabel(event.participants)}
+                              </Text>
+                            </View>
+                            {/* 一人以外の場合のみ関係性を表示 */}
+                            {event.participants !== 'solo' && (
+                              event.relationships && event.relationships.length > 0 ? (
+                                event.relationships.map((rel, idx) => (
+                                  <View key={idx} style={styles.tag}>
+                                    <Text style={styles.tagText}>
+                                      {getRelationshipLabel(rel)}
+                                    </Text>
+                                  </View>
+                                ))
+                              ) : (
+                                <View style={styles.warningTag}>
+                                  <Ionicons name="alert-circle" size={12} color="#ED8936" />
+                                  <Text style={styles.warningTagText}>関係性を設定</Text>
+                                </View>
+                              )
+                            )}
+                            {/* 一人以外の場合のみ形式を表示 */}
+                            {event.participants !== 'solo' && (
+                              <View style={styles.tag}>
+                                <Text style={styles.tagText}>
+                                  {getFormatLabel(event.format)}
+                                </Text>
+                              </View>
+                            )}
+                          </>
+                        )}
+                      </View>
+                      {!isUnclassified && (
+                        <TouchableOpacity
+                          style={styles.deleteButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleDeleteStart(event);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#E53E3E" />
+                        </TouchableOpacity>
                       )}
                     </View>
-                    <TouchableOpacity
-                      style={styles.deleteButton}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleDeleteStart(event);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="trash-outline" size={16} color="#E53E3E" />
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           ))
         ) : (
@@ -1614,6 +1703,12 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
+  eventCardUnclassified: {
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
+  },
   eventHeader: {
     marginBottom: 8,
   },
@@ -1637,6 +1732,22 @@ const styles = StyleSheet.create({
   editedBadgeText: {
     fontSize: 10,
     color: '#718096',
+  },
+  unclassifiedBadge: {
+    backgroundColor: '#EDF2F7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  unclassifiedBadgeText: {
+    fontSize: 11,
+    color: '#A0AEC0',
+    fontWeight: '500',
+  },
+  unclassifiedHint: {
+    fontSize: 11,
+    color: '#A0AEC0',
+    fontStyle: 'italic',
   },
   eventTime: {
     fontSize: 11,

@@ -1,6 +1,6 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 
 // OAuth完了時にブラウザを閉じる
 WebBrowser.maybeCompleteAuthSession();
@@ -8,12 +8,22 @@ WebBrowser.maybeCompleteAuthSession();
 // ========================================
 // 設定値（環境変数から読み込み）
 // ========================================
-const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID!;
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_WEB_CLIENT_ID!;
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_IOS_CLIENT_ID!;
 const GOOGLE_WEB_CLIENT_SECRET = process.env.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_SECRET!;
+
+// Platformに応じてクライアントIDを選択
+const getClientId = () => {
+  if (Platform.OS === 'ios') {
+    return GOOGLE_IOS_CLIENT_ID;
+  }
+  return GOOGLE_WEB_CLIENT_ID;
+};
 
 // デバッグ: 環境変数の確認
 console.log('=== ENV Check ===');
-console.log('CLIENT_ID:', GOOGLE_WEB_CLIENT_ID ? 'SET' : 'MISSING');
+console.log('WEB_CLIENT_ID:', GOOGLE_WEB_CLIENT_ID ? 'SET' : 'MISSING');
+console.log('IOS_CLIENT_ID:', GOOGLE_IOS_CLIENT_ID ? 'SET' : 'MISSING');
 console.log('CLIENT_SECRET:', GOOGLE_WEB_CLIENT_SECRET ? 'SET' : 'MISSING');
 console.log('=================');
 
@@ -29,10 +39,14 @@ const discovery = {
 /**
  * Google OAuth 用の設定を取得
  */
+// iOSではGoogleのリバースクライアントIDをschemeとして使用
+const GOOGLE_IOS_SCHEME = 'com.googleusercontent.apps.854736505548-mibriea31qqtaabf4d2hb4frvtf3d3v9';
+
 export function useGoogleAuth() {
-  // リダイレクトURIを自動生成（Dev Client / Expo Go 両対応）
+  // リダイレクトURIを自動生成
+  // iOSスタンドアロンビルドではGoogleのリバースクライアントIDを使用
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'kokoponmobile',
+    scheme: Platform.OS === 'ios' ? GOOGLE_IOS_SCHEME : 'kokoponmobile',
     preferLocalhost: Platform.OS === 'web',
   });
 
@@ -42,9 +56,11 @@ export function useGoogleAuth() {
   console.log('Platform:', Platform.OS);
   console.log('====================');
 
+  const clientId = getClientId();
+
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
-      clientId: GOOGLE_WEB_CLIENT_ID,
+      clientId,
       scopes: SCOPES,
       redirectUri,
       responseType: AuthSession.ResponseType.Code,
@@ -72,22 +88,37 @@ export async function exchangeCodeForToken(
   codeVerifier: string,
   redirectUri: string
 ): Promise<string | null> {
+  const clientId = getClientId();
   try {
-    const tokenResponse = await AuthSession.exchangeCodeAsync(
-      {
-        clientId: GOOGLE_WEB_CLIENT_ID,
-        clientSecret: GOOGLE_WEB_CLIENT_SECRET, // Web用に必要
-        code,
-        redirectUri,
-        extraParams: {
-          code_verifier: codeVerifier,
-        },
+
+    // iOSネイティブアプリではclientSecretは不要（PKCEを使用）
+    const tokenRequest: AuthSession.AccessTokenRequestConfig = {
+      clientId,
+      code,
+      redirectUri,
+      extraParams: {
+        code_verifier: codeVerifier,
       },
+    };
+
+    // Web/Androidの場合のみclientSecretを追加
+    if (Platform.OS !== 'ios') {
+      tokenRequest.clientSecret = GOOGLE_WEB_CLIENT_SECRET;
+    }
+
+    const tokenResponse = await AuthSession.exchangeCodeAsync(
+      tokenRequest,
       discovery
     );
     return tokenResponse.accessToken;
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('Token exchange error:', error);
+    // デバッグ用アラート（本番リリース前に削除）
+    Alert.alert(
+      'OAuth Debug',
+      `ClientID: ${clientId?.substring(0, 20)}...\nRedirectURI: ${redirectUri}\nError: ${errorMsg}`
+    );
     return null;
   }
 }

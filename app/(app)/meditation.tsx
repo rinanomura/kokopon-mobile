@@ -154,7 +154,6 @@ export default function MeditationScreen() {
 
   // ヘッドフォン接続検出
   const isHeadphoneConnected = useHeadphoneDetection();
-  const autoPlayTriggeredRef = useRef(false);
 
   // SessionLog ID（瞑想開始時に作成）
   const sessionIdRef = useRef<string | null>(null);
@@ -333,21 +332,45 @@ export default function MeditationScreen() {
     await playAudioGuide();
   };
 
+  // 前回のイヤホン接続状態を保持
+  const prevHeadphoneConnectedRef = useRef<boolean | null>(null);
+
   /**
-   * ヘッドフォン接続時の自動再生
+   * イヤホン接続状態に応じた音声制御
+   * - 接続時：音声を再生
+   * - 切断時：音声を停止
    */
   useEffect(() => {
-    // 一度だけ自動再生（ヘッドフォン接続中で、まだ再生していない場合）
-    if (isHeadphoneConnected && !autoPlayTriggeredRef.current && !audioGuideActive) {
-      autoPlayTriggeredRef.current = true;
-      // 少し遅延させて画面表示後に再生
-      const timer = setTimeout(() => {
-        console.log('ヘッドフォン検出: 音声ガイド自動再生');
-        playAudioGuide();
-      }, 1000);
-      return () => clearTimeout(timer);
+    const prevConnected = prevHeadphoneConnectedRef.current;
+
+    // 初回レンダリング時（画面表示後に判定）
+    if (prevConnected === null) {
+      prevHeadphoneConnectedRef.current = isHeadphoneConnected;
+      if (isHeadphoneConnected && !audioGuideActive) {
+        // イヤホン接続中で画面を開いた場合、少し遅延して再生
+        const timer = setTimeout(() => {
+          console.log('初回: イヤホン接続中 → 音声ガイド再生');
+          playAudioGuide();
+        }, 1000);
+        return () => clearTimeout(timer);
+      }
+      return;
     }
-  }, [isHeadphoneConnected, audioGuideActive, playAudioGuide]);
+
+    // イヤホンを付けた時（未接続 → 接続）
+    if (!prevConnected && isHeadphoneConnected) {
+      console.log('イヤホン接続: 音声ガイド再生');
+      playAudioGuide();
+    }
+
+    // イヤホンを外した時（接続 → 未接続）
+    if (prevConnected && !isHeadphoneConnected) {
+      console.log('イヤホン切断: 音声ガイド停止');
+      stopAudioGuide();
+    }
+
+    prevHeadphoneConnectedRef.current = isHeadphoneConnected;
+  }, [isHeadphoneConnected, audioGuideActive, playAudioGuide, stopAudioGuide]);
 
   // プログレスの割合（0〜1）
   const progress = elapsed / MEDITATION_DURATION;

@@ -12,6 +12,14 @@ function getClient() {
   return _client;
 }
 
+/**
+ * GraphQL クライアントをリセット
+ * ログアウト時に呼び出す
+ */
+export function resetClient(): void {
+  _client = null;
+}
+
 // ========================================
 // EmotionLog 関連のクエリ・ミューテーション
 // ========================================

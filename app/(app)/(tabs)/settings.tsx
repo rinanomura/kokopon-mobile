@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { signOut } from 'aws-amplify/auth';
 import { router } from 'expo-router';
 import { useTrainingMode, TrainingMode } from '@/hooks/useTrainingMode';
+import { resetClient } from '@/lib/api';
 
 /**
  * SettingsScreen - 設定画面
@@ -30,7 +31,9 @@ export default function SettingsScreen() {
           onPress: async () => {
             try {
               await signOut();
-              router.replace('/sign-in');
+              // GraphQLクライアントをリセットして古いユーザー情報をクリア
+              resetClient();
+              router.replace('/signin');
             } catch (error) {
               console.error('ログアウトエラー:', error);
             }
