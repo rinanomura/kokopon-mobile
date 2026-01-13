@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTrainingMode, TrainingMode } from '@/hooks/useTrainingMode';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -48,30 +49,59 @@ const MENU_COLORS: Record<MenuId, {
   },
 };
 
-const MENU_DATA: Record<MenuId, {
+// モード別の文言定義
+type MenuCopyItem = {
   title: string;
   description: string;
   bubbleText: string;
-}> = {
-  release_breath: {
-    title: '呼吸の出口を感じてみる 30秒',
-    description: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
-    bubbleText: '少しエネルギーが高まっているみたい。\n吐く息に意識を向けてみようね。',
+};
+
+const MENU_COPY: Record<TrainingMode, Record<MenuId, MenuCopyItem>> = {
+  // 直感モード（既存の文言）
+  intuitive: {
+    release_breath: {
+      title: '呼吸の出口を感じてみる 30秒',
+      description: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
+      bubbleText: '少しエネルギーが高まっているみたい。\n吐く息に意識を向けてみようね。',
+    },
+    sense_energy: {
+      title: '今のエネルギーを感じてみる 30秒',
+      description: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
+      bubbleText: '元気なエネルギーがあるみたい。\nその感覚をそのまま感じてみようね。',
+    },
+    ground_body: {
+      title: '体の重さをあずけてみる 30秒',
+      description: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
+      bubbleText: '少し重さを感じているのかな。\n体をあずける感覚を味わってみようね。',
+    },
+    calm_stay: {
+      title: '呼吸を感じてみる 30秒',
+      description: '今の呼吸の出入りを、そのまま静かに感じてみましょう。',
+      bubbleText: '穏やかな状態みたいだね。\nそのまま呼吸を感じてみようね。',
+    },
   },
-  sense_energy: {
-    title: '今のエネルギーを感じてみる 30秒',
-    description: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
-    bubbleText: '元気なエネルギーがあるみたい。\nその感覚をそのまま感じてみようね。',
-  },
-  ground_body: {
-    title: '体の重さをあずけてみる 30秒',
-    description: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
-    bubbleText: '少し重さを感じているのかな。\n体をあずける感覚を味わってみようね。',
-  },
-  calm_stay: {
-    title: '呼吸を感じてみる 30秒',
-    description: '今の呼吸の出入りを、そのまま静かに感じてみましょう。',
-    bubbleText: '穏やかな状態みたいだね。\nそのまま呼吸を感じてみようね。',
+  // 言語化モード
+  verbal: {
+    release_breath: {
+      title: '焦りを整える 30秒',
+      description: '焦りや苛立ちを、無理に変えずに見つめてみます。',
+      bubbleText: '焦りや苛立ちがあるみたい。\n一緒に見つめてみようね。',
+    },
+    sense_energy: {
+      title: '高揚感を味わう 30秒',
+      description: '今の高揚感や喜びを、そのまま味わってみます。',
+      bubbleText: '高揚感や喜びがあるんだね。\nそのまま味わってみようね。',
+    },
+    ground_body: {
+      title: '悲しみを整える 30秒',
+      description: '悲しみや落ち込みを、無理に変えずに見つめてみます。',
+      bubbleText: '悲しみや落ち込みがあるみたい。\n一緒に見つめてみようね。',
+    },
+    calm_stay: {
+      title: '穏やかさを感じる 30秒',
+      description: '今の穏やかな気持ちを、そのまま感じてみます。',
+      bubbleText: '穏やかな気持ちだね。\nそのまま感じてみようね。',
+    },
   },
 };
 
@@ -114,14 +144,17 @@ export default function RecommendationScreen() {
     beforeTheta: string;
   }>();
 
-  // EmotionPoint から適切なメニューを選択
+  // トレーニングモードを取得
+  const { mode } = useTrainingMode();
+
+  // EmotionPoint から適切なメニューを選択（モードに応じた文言を使用）
   const { menu, menuId, colors } = useMemo(() => {
     const x = parseFloat(params.beforeX || '0');
     const y = parseFloat(params.beforeY || '0');
     const r = parseFloat(params.beforeR || '0');
     const id = getMenuId(x, y, r);
-    return { menu: MENU_DATA[id], menuId: id, colors: MENU_COLORS[id] };
-  }, [params.beforeX, params.beforeY, params.beforeR]);
+    return { menu: MENU_COPY[mode][id], menuId: id, colors: MENU_COLORS[id] };
+  }, [params.beforeX, params.beforeY, params.beforeR, mode]);
 
   // アニメーション用の値
   const mascotOpacity = useRef(new Animated.Value(0)).current;

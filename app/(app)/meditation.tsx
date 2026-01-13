@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { createSessionLog, getUserId } from '@/lib/api';
 import { useHeadphoneDetection } from '@/hooks/useHeadphoneDetection';
+import { useTrainingMode, TrainingMode } from '@/hooks/useTrainingMode';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -51,23 +52,47 @@ const MASCOT_GIFS = {
   calm_stay: require('@/assets/images/rinawan_breathing_eye-closed.gif'),
 } as const;
 
-// メニューIDに対応するUI表示テキスト
-const MENU_UI: Record<MenuId, { title: string; guideText: string }> = {
-  release_breath: {
-    title: '呼吸の出口を感じる30秒',
-    guideText: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
+// モード別のUI表示テキスト
+type MenuUIItem = { title: string; guideText: string };
+
+const MENU_UI: Record<TrainingMode, Record<MenuId, MenuUIItem>> = {
+  // 直感モード（既存の文言）
+  intuitive: {
+    release_breath: {
+      title: '呼吸の出口を感じる30秒',
+      guideText: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
+    },
+    sense_energy: {
+      title: '今のエネルギーを感じる30秒',
+      guideText: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
+    },
+    ground_body: {
+      title: '体の重さをあずける30秒',
+      guideText: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
+    },
+    calm_stay: {
+      title: '呼吸を感じる30秒',
+      guideText: '今の呼吸の出入りを、そのまま感じてみよう。',
+    },
   },
-  sense_energy: {
-    title: '今のエネルギーを感じる30秒',
-    guideText: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
-  },
-  ground_body: {
-    title: '体の重さをあずける30秒',
-    guideText: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
-  },
-  calm_stay: {
-    title: '呼吸を感じる30秒',
-    guideText: '今の呼吸の出入りを、そのまま感じてみよう。',
+  // 言語化モード
+  verbal: {
+    release_breath: {
+      title: '焦りを整える30秒',
+      guideText: '焦りや苛立ちを、無理に変えずに見つめてみます。',
+    },
+    sense_energy: {
+      title: '高揚感を味わう30秒',
+      guideText: '今の高揚感や喜びを、そのまま味わってみます。',
+    },
+    ground_body: {
+      title: '悲しみを整える30秒',
+      guideText: '悲しみや落ち込みを、無理に変えずに見つめてみます。',
+    },
+    calm_stay: {
+      title: '穏やかさを感じる30秒',
+      guideText: '今の穏やかな気持ちを、そのまま感じてみます。',
+    },
   },
 };
 
@@ -115,6 +140,9 @@ export default function MeditationScreen() {
 
   // menuId を取得（デフォルトは calm_stay）
   const menuId: MenuId = (params.menuId as MenuId) || 'calm_stay';
+
+  // トレーニングモードを取得
+  const { mode } = useTrainingMode();
 
   // 経過時間（秒）
   const [elapsed, setElapsed] = useState(0);
@@ -346,7 +374,7 @@ export default function MeditationScreen() {
           <View style={styles.mainContent}>
             {/* タイトル */}
             <Text style={styles.title}>
-              {MENU_UI[menuId].title}
+              {MENU_UI[mode][menuId].title}
             </Text>
 
             {/* りなわんGIF */}
@@ -360,7 +388,7 @@ export default function MeditationScreen() {
 
             {/* ガイド文 */}
             <Text style={styles.guideText}>
-              {MENU_UI[menuId].guideText}
+              {MENU_UI[mode][menuId].guideText}
             </Text>
 
             {/* プログレス表示（円形リング） */}
