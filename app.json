@@ -6,7 +6,10 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "buildNumber": "2",
-    "scheme": "kokoponmobile",
+    "scheme": [
+      "kokoponmobile",
+      "com.googleusercontent.apps.854736505548-mibriea31qqtaabf4d2hb4frvtf3d3v9"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
