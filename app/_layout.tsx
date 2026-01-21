@@ -8,6 +8,7 @@ import outputs from "../amplify_outputs.json";
 
 import { useEffect, useState, useCallback } from "react";
 import { Slot, useRouter, useSegments } from "expo-router";
+import { PreferencesProvider } from "@/components/PreferencesProvider";
 import { fetchAuthSession } from "aws-amplify/auth";
 import { Hub } from "aws-amplify/utils";
 
@@ -84,5 +85,9 @@ export default function RootLayout() {
 
   if (!ready) return null;
 
-  return <Slot />;
+  return (
+    <PreferencesProvider>
+      <Slot />
+    </PreferencesProvider>
+  );
 }

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { signOut } from 'aws-amplify/auth';
 import { router } from 'expo-router';
-import { useTrainingMode, TrainingMode } from '@/hooks/useTrainingMode';
+import { usePreferences, TrainingMode, VoiceType } from '@/hooks/usePreferences';
 import { resetClient } from '@/lib/api';
 
 /**
@@ -13,10 +13,14 @@ import { resetClient } from '@/lib/api';
  * ユーザー設定・ログアウト
  */
 export default function SettingsScreen() {
-  const { mode, setMode } = useTrainingMode();
+  const { trainingMode, setTrainingMode, voice, setVoice } = usePreferences();
 
   const handleModeChange = (newMode: TrainingMode) => {
-    setMode(newMode);
+    setTrainingMode(newMode);
+  };
+
+  const handleVoiceChange = (newVoice: VoiceType) => {
+    setVoice(newVoice);
   };
 
   const handleSignOut = async () => {
@@ -51,19 +55,19 @@ export default function SettingsScreen() {
 
           {/* トレーニングモード設定 */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>トレーニングモード設定</Text>
+            <Text style={styles.sectionTitle}>トレーニング表示モード</Text>
             <View style={styles.modeSelector}>
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  mode === 'intuitive' && styles.modeButtonSelected,
+                  trainingMode === 'intuitive' && styles.modeButtonSelected,
                 ]}
                 onPress={() => handleModeChange('intuitive')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  mode === 'intuitive' && styles.modeButtonTextSelected,
+                  trainingMode === 'intuitive' && styles.modeButtonTextSelected,
                 ]}>
                   直感モード
                 </Text>
@@ -71,20 +75,58 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  mode === 'verbal' && styles.modeButtonSelected,
+                  trainingMode === 'verbal' && styles.modeButtonSelected,
                 ]}
                 onPress={() => handleModeChange('verbal')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  mode === 'verbal' && styles.modeButtonTextSelected,
+                  trainingMode === 'verbal' && styles.modeButtonTextSelected,
                 ]}>
                   言語化モード
                 </Text>
               </TouchableOpacity>
             </View>
             <Text style={styles.sectionHint}>途中でいつでも変更できます</Text>
+          </View>
+
+          {/* 音声ガイド設定 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>音声ガイドの話者</Text>
+            <View style={styles.modeSelector}>
+              <TouchableOpacity
+                style={[
+                  styles.modeButton,
+                  voice === 'rina' && styles.modeButtonSelected,
+                ]}
+                onPress={() => handleVoiceChange('rina')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.modeButtonText,
+                  voice === 'rina' && styles.modeButtonTextSelected,
+                ]}>
+                  野村里奈
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modeButton,
+                  voice === 'rinawan' && styles.modeButtonSelected,
+                ]}
+                onPress={() => handleVoiceChange('rinawan')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.modeButtonText,
+                  voice === 'rinawan' && styles.modeButtonTextSelected,
+                ]}>
+                  りなわん
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.sectionHint}>瞑想画面で使用する音声ガイドの声を選択</Text>
           </View>
 
           {/* ログアウトボタン */}

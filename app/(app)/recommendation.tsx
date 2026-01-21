@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,122 +9,97 @@ import {
   Dimensions,
   Animated,
   Easing,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useTrainingMode, TrainingMode } from '@/hooks/useTrainingMode';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { usePreferences } from '@/hooks/usePreferences';
+import {
+  MenuId,
+  Quadrant,
+  TrainingContent,
+  getTrainingContent,
+  getQuadrant,
+  getMenuIdsByQuadrant,
+} from '@/constants/trainingContents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// メニュー定義
-type MenuId = 'release_breath' | 'sense_energy' | 'ground_body' | 'calm_stay';
+// =============================================================================
+// ローテーションカウンタ（AsyncStorage）
+// =============================================================================
 
-// メニューごとのカラー定義
-const MENU_COLORS: Record<MenuId, {
-  backgroundGradient: [string, string];
-  cardGradient: [string, string];
-  shadowColor: string;
-}> = {
-  release_breath: {
-    backgroundGradient: ['#D4A5E8', '#E8D0F0'],  // ピンク寄りの淡い紫
-    cardGradient: ['#B07CC8', '#C9A0D8'],        // 背景より濃いめの紫
-    shadowColor: '#B07CC8',
-  },
-  sense_energy: {
-    backgroundGradient: ['#FFB6C1', '#FFDCE4'],  // 現行ピンク（淡め）
-    cardGradient: ['#FF85A2', '#FFB6C1'],        // 現行ピンク（濃いめ）
-    shadowColor: '#FF85A2',
-  },
-  ground_body: {
-    backgroundGradient: ['#A5B8E8', '#D0DEF0'],  // ブルー寄りの淡い紫
-    cardGradient: ['#7A8FC8', '#A0B8D8'],        // 背景より濃いめの青紫
-    shadowColor: '#7A8FC8',
-  },
-  calm_stay: {
-    backgroundGradient: ['#7AD7C8', '#CDEEF0'],  // グリーン寄りの淡いブルー
-    cardGradient: ['#5ABFB0', '#8AD7C8'],        // 背景より濃いめの青緑
-    shadowColor: '#5ABFB0',
-  },
-};
-
-// モード別の文言定義
-type MenuCopyItem = {
-  title: string;
-  description: string;
-  bubbleText: string;
-};
-
-const MENU_COPY: Record<TrainingMode, Record<MenuId, MenuCopyItem>> = {
-  // 直感モード（既存の文言）
-  intuitive: {
-    release_breath: {
-      title: '呼吸の出口を感じてみる 30秒',
-      description: '今の状態を変えようとせず、吐く息が自然に出ていく感覚だけを感じてみます。',
-      bubbleText: '少しエネルギーが高まっているみたい。\n吐く息に意識を向けてみようね。',
-    },
-    sense_energy: {
-      title: '今のエネルギーを感じてみる 30秒',
-      description: 'この元気さや高まりが、体のどこにあるかをそのまま感じてみます。',
-      bubbleText: '元気なエネルギーがあるみたい。\nその感覚をそのまま感じてみようね。',
-    },
-    ground_body: {
-      title: '体の重さをあずけてみる 30秒',
-      description: '呼吸にこだわらず、体の重さがどこにあずけられているかを感じてみます。',
-      bubbleText: '少し重さを感じているのかな。\n体をあずける感覚を味わってみようね。',
-    },
-    calm_stay: {
-      title: '呼吸を感じてみる 30秒',
-      description: '今の呼吸の出入りを、そのまま静かに感じてみましょう。',
-      bubbleText: '穏やかな状態みたいだね。\nそのまま呼吸を感じてみようね。',
-    },
-  },
-  // 言語化モード
-  verbal: {
-    release_breath: {
-      title: '焦りを整える 30秒',
-      description: '焦りや苛立ちを、無理に変えずに見つめてみます。',
-      bubbleText: '焦りや苛立ちがあるみたい。\n一緒に見つめてみようね。',
-    },
-    sense_energy: {
-      title: '高揚感を味わう 30秒',
-      description: '今の高揚感や喜びを、そのまま味わってみます。',
-      bubbleText: '高揚感や喜びがあるんだね。\nそのまま味わってみようね。',
-    },
-    ground_body: {
-      title: '悲しみを整える 30秒',
-      description: '悲しみや落ち込みを、無理に変えずに見つめてみます。',
-      bubbleText: '悲しみや落ち込みがあるみたい。\n一緒に見つめてみようね。',
-    },
-    calm_stay: {
-      title: '穏やかさを感じる 30秒',
-      description: '今の穏やかな気持ちを、そのまま感じてみます。',
-      bubbleText: '穏やかな気持ちだね。\nそのまま感じてみようね。',
-    },
-  },
-};
+/** ローテーションカウンタのストレージキーを生成 */
+function getRotationStorageKey(quadrant: Quadrant): string {
+  return `rec_rot_${quadrant}`;
+}
 
 /**
- * EmotionPoint から menuId を決定する
- * - r < 0.25 の場合は calm_stay（中央優先）
- * - y < 0: 高覚醒（画面座標では上がマイナス）, y >= 0: 低覚醒
- * - x >= 0: 快, x < 0: 不快
+ * 象限ごとのローテーションカウンタを取得し、インクリメントして保存
+ * @returns 現在のカウンタ値（0, 1, 2 のいずれか）
  */
-function getMenuId(x: number, y: number, r: number): MenuId {
-  // 中央付近は calm_stay
+async function getAndIncrementRotationCounter(quadrant: Quadrant, candidateCount: number): Promise<number> {
+  const key = getRotationStorageKey(quadrant);
+
+  try {
+    const stored = await AsyncStorage.getItem(key);
+    const currentCounter = stored ? parseInt(stored, 10) : 0;
+
+    // 現在のインデックス（候補数で割った余り）
+    const index = currentCounter % candidateCount;
+
+    // 次回用にインクリメントして保存
+    const nextCounter = currentCounter + 1;
+    await AsyncStorage.setItem(key, nextCounter.toString());
+
+    return index;
+  } catch (error) {
+    console.log('ローテーションカウンタ取得エラー:', error);
+    return 0;
+  }
+}
+
+// =============================================================================
+// メニュー選択ロジック（12本対応・ローテーション）
+// =============================================================================
+
+/**
+ * 座標から象限を判定
+ * 中央付近（r < 0.25）は low_pleasant として扱う
+ */
+function determineQuadrant(x: number, y: number, r: number): Quadrant {
   if (r < 0.25) {
+    return 'low_pleasant';
+  }
+  return getQuadrant(x, y);
+}
+
+/**
+ * 座標から象限を判定し、その象限の候補メニューID（3本）を返す
+ */
+function getCandidateMenuIds(quadrant: Quadrant): MenuId[] {
+  return getMenuIdsByQuadrant(quadrant);
+}
+
+/**
+ * ローテーションベースで候補から1つを選択（非同期）
+ * AsyncStorage で象限ごとにカウンタを永続化
+ */
+async function pickMenuIdWithRotation(quadrant: Quadrant, candidates: MenuId[]): Promise<MenuId> {
+  if (candidates.length === 0) {
     return 'calm_stay';
   }
 
-  const isHighArousal = y < 0;  // 画面座標では上がマイナス
-  const isPleasant = x >= 0;
-
-  if (isHighArousal && !isPleasant) return 'release_breath';  // 左上：高覚醒×不快
-  if (isHighArousal && isPleasant) return 'sense_energy';     // 右上：高覚醒×快
-  if (!isHighArousal && !isPleasant) return 'ground_body';    // 左下：低覚醒×不快
-  return 'calm_stay';                                          // 右下：低覚醒×快
+  const index = await getAndIncrementRotationCounter(quadrant, candidates.length);
+  return candidates[index];
 }
+
+// =============================================================================
+// RecommendationScreen
+// =============================================================================
 
 /**
  * RecommendationScreen - マインドフルネスおすすめ画面（④）
@@ -144,17 +119,39 @@ export default function RecommendationScreen() {
     beforeTheta: string;
   }>();
 
-  // トレーニングモードを取得
-  const { mode } = useTrainingMode();
+  // 設定を取得
+  const { trainingMode, voice, isLoaded } = usePreferences();
 
-  // EmotionPoint から適切なメニューを選択（モードに応じた文言を使用）
-  const { menu, menuId, colors } = useMemo(() => {
-    const x = parseFloat(params.beforeX || '0');
-    const y = parseFloat(params.beforeY || '0');
-    const r = parseFloat(params.beforeR || '0');
-    const id = getMenuId(x, y, r);
-    return { menu: MENU_COPY[mode][id], menuId: id, colors: MENU_COLORS[id] };
-  }, [params.beforeX, params.beforeY, params.beforeR, mode]);
+  // メニュー選択状態（非同期で決定）
+  const [menuId, setMenuId] = useState<MenuId | null>(null);
+  const [content, setContent] = useState<TrainingContent | null>(null);
+  const menuSelectedRef = useRef(false);
+
+  // メニュー選択（画面マウント時に1回だけ実行）
+  useEffect(() => {
+    if (menuSelectedRef.current) return;
+    menuSelectedRef.current = true;
+
+    const selectMenu = async () => {
+      const x = parseFloat(params.beforeX || '0');
+      const y = parseFloat(params.beforeY || '0');
+      const r = parseFloat(params.beforeR || '0');
+
+      // 象限を判定
+      const quadrant = determineQuadrant(x, y, r);
+
+      // 候補を取得
+      const candidates = getCandidateMenuIds(quadrant);
+
+      // ローテーションで選択
+      const selectedId = await pickMenuIdWithRotation(quadrant, candidates);
+
+      setMenuId(selectedId);
+      setContent(getTrainingContent(selectedId));
+    };
+
+    selectMenu();
+  }, [params.beforeX, params.beforeY, params.beforeR]);
 
   // アニメーション用の値
   const mascotOpacity = useRef(new Animated.Value(0)).current;
@@ -162,8 +159,10 @@ export default function RecommendationScreen() {
   const cardTranslateY = useRef(new Animated.Value(30)).current;
   const cardScale = useRef(new Animated.Value(1)).current;
 
-  // 入場アニメーション
+  // 入場アニメーション（isLoaded と content が揃ったら開始）
   useEffect(() => {
+    if (!isLoaded || !content) return;
+
     // りなわん＆吹き出しをフェードイン
     Animated.timing(mascotOpacity, {
       toValue: 1,
@@ -186,13 +185,12 @@ export default function RecommendationScreen() {
           useNativeDriver: true,
         }),
       ]).start(() => {
-        // カード表示後、パルスアニメーション開始
         startPulseAnimation();
       });
     }, 800);
 
     return () => clearTimeout(cardTimer);
-  }, []);
+  }, [isLoaded, content]);
 
   // パルスアニメーション（タップを促す）
   const startPulseAnimation = () => {
@@ -216,9 +214,10 @@ export default function RecommendationScreen() {
 
   /**
    * トレーニングカードをタップしたときのハンドラ
-   * ⑤瞑想実行画面へ遷移（beforePoint を引き継ぐ）
    */
   const handleStart = () => {
+    if (!menuId) return;
+
     console.log('=== トレーニング開始 ===');
     console.log('menuId:', menuId);
     router.push({
@@ -233,9 +232,30 @@ export default function RecommendationScreen() {
     });
   };
 
+  // ローディング中の表示（設定読み込み中 or メニュー未選択）
+  if (!isLoaded || !content) {
+    // フォールバック用のデフォルト色
+    const defaultColors = {
+      backgroundGradient: ['#E8E8E8', '#F5F5F5'] as [string, string],
+    };
+
+    return (
+      <LinearGradient
+        colors={content?.colors.backgroundGradient || defaultColors.backgroundGradient}
+        style={styles.gradient}
+      >
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#5A6B7C" />
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
   return (
     <LinearGradient
-      colors={colors.backgroundGradient}
+      colors={content.colors.backgroundGradient}
       style={styles.gradient}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -248,13 +268,18 @@ export default function RecommendationScreen() {
             今のあなたにおすすめのトレーニング
           </Text>
 
+          {/* 開発用: 現在の設定表示（本番では削除） */}
+          <Text style={styles.devSettings}>
+            mode={trainingMode} / voice={voice} / menu={menuId}
+          </Text>
+
           {/* りなわん＆吹き出し（フェードイン） */}
           <Animated.View style={{ opacity: mascotOpacity }}>
             {/* 吹き出し（りなわんのセリフ） */}
             <View style={styles.speechBubbleContainer}>
               <View style={styles.speechBubble}>
                 <Text style={styles.speechBubbleText}>
-                  {menu.bubbleText}
+                  {content.bubbleText[trainingMode]}
                 </Text>
               </View>
               {/* 吹き出しの尻尾（下向き三角） */}
@@ -284,16 +309,16 @@ export default function RecommendationScreen() {
             <TouchableOpacity
               onPress={handleStart}
               activeOpacity={0.8}
-              style={[styles.trainingCardWrapper, { shadowColor: colors.shadowColor }]}
+              style={[styles.trainingCardWrapper, { shadowColor: content.colors.shadowColor }]}
             >
               <LinearGradient
-                colors={colors.cardGradient}
+                colors={content.colors.cardGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.trainingCard}
               >
                 <Text style={styles.trainingTitle}>
-                  {menu.title}
+                  {content.title[trainingMode]}
                 </Text>
                 <View style={styles.tapHintContainer}>
                   <Ionicons
@@ -328,6 +353,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  // ローディング
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   // 上部タイトル
   title: {
     fontSize: 20,
@@ -336,6 +368,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 30,
     marginBottom: 20,
+  },
+  // 開発用設定表示（本番では削除）
+  devSettings: {
+    fontSize: 10,
+    color: '#A0AEC0',
+    textAlign: 'center',
+    marginBottom: 8,
   },
 
   // 吹き出し
@@ -348,7 +387,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingVertical: 16,
     paddingHorizontal: 20,
-    // やさしい影
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -390,7 +428,6 @@ const styles = StyleSheet.create({
   trainingCardWrapper: {
     width: '100%',
     borderRadius: 20,
-    // やさしい影（shadowColorは動的に適用）
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
