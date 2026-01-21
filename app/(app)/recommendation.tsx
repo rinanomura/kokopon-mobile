@@ -23,7 +23,6 @@ import {
   TrainingContent,
   getTrainingContent,
   getQuadrant,
-  getMenuIdsByQuadrant,
 } from '@/constants/trainingContents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -67,21 +66,53 @@ async function getAndIncrementRotationCounter(quadrant: Quadrant, candidateCount
 // =============================================================================
 
 /**
+ * 象限ごとの候補メニューID（明示的な固定マップ）
+ * trainingContents.ts に依存せず、recommendation.tsx 内で完結させる
+ */
+const QUADRANT_MENU_MAP: Record<string, MenuId[]> = {
+  // group1: 左上（高活性×不快）
+  high_unpleasant: ['release_breath', 'heat_notice', 'sound_release'],
+  // group2: 右上（高活性×快）
+  high_pleasant: ['sense_energy', 'expand_chest', 'rhythm_notice'],
+  // group3: 左下（低活性×不快）
+  low_unpleasant: ['ground_body', 'contact_points', 'slow_breath'],
+  // group4: 右下（低活性×快）
+  low_pleasant: ['calm_stay', 'pleasant_notice', 'stillness'],
+};
+
+// デフォルト候補（low_pleasant グループ）
+const DEFAULT_CANDIDATES: MenuId[] = ['calm_stay', 'pleasant_notice', 'stillness'];
+
+/**
  * 座標から象限を判定
  * 中央付近（r < 0.25）は low_pleasant として扱う
+ *
+ * 重要: EmotionWheel の座標系は「上が y < 0、下が y > 0」だが、
+ * getQuadrant は「y > 0 = high arousal」と期待しているため、
+ * y を反転させて渡す必要がある。
  */
 function determineQuadrant(x: number, y: number, r: number): Quadrant {
   if (r < 0.25) {
     return 'low_pleasant';
   }
-  return getQuadrant(x, y);
+  // y を反転させて getQuadrant に渡す（画面座標系 → 感情座標系）
+  return getQuadrant(x, -y);
 }
 
 /**
- * 座標から象限を判定し、その象限の候補メニューID（3本）を返す
+ * 象限から候補メニューID（3本）を返す
+ * 明示的な固定マップを使用し、未知の値は安全に group4 を返す
  */
 function getCandidateMenuIds(quadrant: Quadrant): MenuId[] {
-  return getMenuIdsByQuadrant(quadrant);
+  const candidates = QUADRANT_MENU_MAP[quadrant];
+
+  if (candidates && candidates.length > 0) {
+    return candidates;
+  }
+
+  // 未知の象限値の場合は安全に group4 を返す
+  console.log('未知の象限値:', quadrant, '→ デフォルト候補を使用');
+  return DEFAULT_CANDIDATES;
 }
 
 /**
@@ -140,8 +171,14 @@ export default function RecommendationScreen() {
       // 象限を判定
       const quadrant = determineQuadrant(x, y, r);
 
-      // 候補を取得
+      // 候補を取得（明示的な固定マップから）
       const candidates = getCandidateMenuIds(quadrant);
+
+      // デバッグログ
+      console.log('=== メニュー選択 ===');
+      console.log('座標: x=', x, 'y=', y, 'r=', r);
+      console.log('象限:', quadrant);
+      console.log('候補:', candidates);
 
       // ローテーションで選択
       const selectedId = await pickMenuIdWithRotation(quadrant, candidates);

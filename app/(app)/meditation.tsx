@@ -349,39 +349,53 @@ export default function MeditationScreen() {
                 />
               </View>
             </View>
+
+            {/* 音声ガイドボタン（プログレスバーの下） */}
+            <View style={styles.audioGuideContainer}>
+              {audioLoading ? (
+                <View style={styles.audioGuideButtonLoading}>
+                  <Text style={styles.audioGuideButtonLoadingText}>
+                    読み込み中...
+                  </Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={handleAudioGuide}
+                  activeOpacity={0.8}
+                  style={[
+                    styles.audioGuideButtonWrapper,
+                    audioGuideActive && styles.audioGuideButtonActive,
+                  ]}
+                >
+                  <Ionicons
+                    name={audioGuideActive ? 'pause-circle' : 'play-circle'}
+                    size={24}
+                    color={audioGuideActive ? '#FFFFFF' : '#FF85A2'}
+                  />
+                  <Text
+                    style={[
+                      styles.audioGuideButtonText,
+                      audioGuideActive && styles.audioGuideButtonTextActive,
+                    ]}
+                  >
+                    {audioGuideActive ? '音声ガイドを止める' : '音声ガイドを聴く'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {/* 話者表示（再生中以外） */}
+              {!audioGuideActive && !audioLoading && (
+                <Text style={styles.voiceLabel}>
+                  {voice === 'rina' ? '野村里奈' : 'りなわん'}の声
+                </Text>
+              )}
+            </View>
           </View>
 
-          {/* フッター：音声ガイド */}
+          {/* フッター：開発用表示 */}
           <View style={styles.footer}>
-            {/* 開発用: 現在の設定表示（本番では削除） */}
             <Text style={styles.devSettings}>
               mode={trainingMode} / voice={voice}
             </Text>
-
-            {/* 現在の音声ガイド設定を表示（設定画面で変更可能） */}
-            {!audioGuideActive && !audioLoading && (
-              <View style={styles.voiceSelector}>
-                <Text style={styles.voiceSelectorLabel}>
-                  音声ガイド：{voice === 'rina' ? '野村里奈' : 'りなわん'}
-                </Text>
-              </View>
-            )}
-
-            {/* 再生ボタン */}
-            {audioLoading ? (
-              <Text style={styles.audioGuideHint}>
-                読み込み中...
-              </Text>
-            ) : (
-              <TouchableOpacity
-                onPress={handleAudioGuide}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.audioGuideButton}>
-                  {audioGuideActive ? '音声ガイドを止める' : '音声ガイドを使う'}
-                </Text>
-              </TouchableOpacity>
-            )}
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -477,10 +491,60 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
 
+  // 音声ガイドボタン
+  audioGuideContainer: {
+    marginTop: 32,
+    alignItems: 'center',
+  },
+  audioGuideButtonWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 28,
+    gap: 10,
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 133, 162, 0.3)',
+  },
+  audioGuideButtonActive: {
+    backgroundColor: '#FF85A2',
+    borderColor: '#FF85A2',
+    shadowOpacity: 0.4,
+  },
+  audioGuideButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FF85A2',
+  },
+  audioGuideButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  audioGuideButtonLoading: {
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  audioGuideButtonLoadingText: {
+    fontSize: 14,
+    color: '#A0AEC0',
+    fontWeight: '500',
+  },
+  voiceLabel: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#718096',
+    fontWeight: '500',
+  },
+
   // フッター
   footer: {
     paddingHorizontal: 24,
-    paddingBottom: 24,
+    paddingBottom: 16,
     alignItems: 'center',
   },
   // 開発用設定表示（本番では削除）
@@ -488,25 +552,5 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#A0AEC0',
     textAlign: 'center',
-    marginBottom: 8,
-  },
-  voiceSelector: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  voiceSelectorLabel: {
-    fontSize: 13,
-    color: '#718096',
-    fontWeight: '500',
-  },
-  audioGuideButton: {
-    fontSize: 14,
-    color: '#5A6B7C',
-    fontWeight: '500',
-  },
-  audioGuideHint: {
-    fontSize: 14,
-    color: '#A0AEC0',
-    fontWeight: '500',
   },
 });
