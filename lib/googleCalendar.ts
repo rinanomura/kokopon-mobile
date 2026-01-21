@@ -124,6 +124,17 @@ export async function exchangeCodeForToken(
 }
 
 /**
+ * カレンダー情報型
+ */
+export interface CalendarInfo {
+  id: string;
+  summary: string;
+  primary?: boolean;
+  backgroundColor?: string;
+  selected?: boolean;
+}
+
+/**
  * カレンダーイベント型
  */
 export interface CalendarEvent {
@@ -137,15 +148,52 @@ export interface CalendarEvent {
     dateTime?: string;
     date?: string;
   };
+  calendarId?: string;
+}
+
+/**
+ * Google Calendar API からカレンダー一覧を取得
+ */
+export async function fetchCalendarList(
+  accessToken: string
+): Promise<CalendarInfo[]> {
+  try {
+    const response = await fetch(
+      'https://www.googleapis.com/calendar/v3/users/me/calendarList',
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Calendar List API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return (data.items || []).map((item: any) => ({
+      id: item.id,
+      summary: item.summary || item.id,
+      primary: item.primary || false,
+      backgroundColor: item.backgroundColor,
+      selected: item.selected,
+    }));
+  } catch (error) {
+    console.error('Calendar list fetch error:', error);
+    return [];
+  }
 }
 
 /**
  * Google Calendar API からイベントを取得
+ * calendarIds が指定されていない場合は primary のみ取得
  */
 export async function fetchCalendarEvents(
   accessToken: string,
   timeMin: Date,
-  timeMax: Date
+  timeMax: Date,
+  calendarIds?: string[]
 ): Promise<CalendarEvent[]> {
   try {
     const params = new URLSearchParams({
@@ -156,21 +204,48 @@ export async function fetchCalendarEvents(
       maxResults: '100',
     });
 
-    const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+    // カレンダーIDが指定されていなければ primary のみ
+    const idsToFetch = calendarIds && calendarIds.length > 0
+      ? calendarIds
+      : ['primary'];
+
+    // 各カレンダーからイベントを並列取得
+    const allEventsPromises = idsToFetch.map(async (calendarId) => {
+      const encodedCalendarId = encodeURIComponent(calendarId);
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events?${params}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        console.warn(`Calendar API error for ${calendarId}: ${response.status}`);
+        return [];
       }
-    );
 
-    if (!response.ok) {
-      throw new Error(`Calendar API error: ${response.status}`);
-    }
+      const data = await response.json();
+      // 各イベントにcalendarIdを付与し、summaryがない場合はフォールバック
+      return (data.items || []).map((event: CalendarEvent) => ({
+        ...event,
+        summary: event.summary || '(予定あり)',
+        calendarId,
+      }));
+    });
 
-    const data = await response.json();
-    return data.items || [];
+    const allEventsArrays = await Promise.all(allEventsPromises);
+    const allEvents = allEventsArrays.flat();
+
+    // 開始時刻でソート
+    allEvents.sort((a, b) => {
+      const aTime = a.start.dateTime || a.start.date || '';
+      const bTime = b.start.dateTime || b.start.date || '';
+      return aTime.localeCompare(bTime);
+    });
+
+    return allEvents;
   } catch (error) {
     console.error('Calendar fetch error:', error);
     return [];
