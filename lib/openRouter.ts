@@ -6,6 +6,13 @@
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = process.env.EXPO_PUBLIC_OPENROUTER_API_KEY;
 
+// モデル設定
+const MODELS = {
+  classification: 'anthropic/claude-3.5-haiku',  // 分類用（高速・低コスト）
+  chat: 'openai/gpt-5.2-chat',                   // チャット用（高品質な対話）
+  audio: 'openai/gpt-audio-mini',                // 音声チャット用（コスト効率）
+};
+
 // 分類結果の型定義
 export interface EventClassification {
   participants: 'solo' | 'small' | 'large';
@@ -26,7 +33,11 @@ export interface ClassifiedEvent {
 /**
  * OpenRouter APIを呼び出してテキストを生成
  */
-async function callOpenRouter(prompt: string, systemPrompt: string): Promise<string> {
+async function callOpenRouter(
+  prompt: string,
+  systemPrompt: string,
+  model: 'classification' | 'chat' = 'classification'
+): Promise<string> {
   if (!OPENROUTER_API_KEY) {
     throw new Error('OPENROUTER_API_KEY is not set');
   }
@@ -40,13 +51,13 @@ async function callOpenRouter(prompt: string, systemPrompt: string): Promise<str
       'X-Title': 'Kokopon Mobile',
     },
     body: JSON.stringify({
-      model: 'anthropic/claude-3.5-haiku',
+      model: MODELS[model],
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
       ],
-      temperature: 0.3,
-      max_tokens: 2000,
+      temperature: model === 'chat' ? 0.7 : 0.3,
+      max_tokens: model === 'chat' ? 4000 : 2000,
     }),
   });
 
@@ -265,6 +276,26 @@ export interface StressAnalysisInput {
     afterArousal?: number;
   }>;
   totalDays: number;
+  // チャット履歴（イベントについてのユーザーとの会話）
+  chats?: Array<{
+    eventId: string;
+    eventSummary?: string;
+    messages: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+    }>;
+  }>;
+  // 変更履歴（ユーザーがスコアや参加者を変更した履歴）
+  changeLogs?: Array<{
+    eventId: string;
+    eventSummary?: string;
+    timestamp: string;
+    changedBy: 'ai' | 'user';
+    oldStressScore?: number | null;
+    newStressScore?: number | null;
+    oldParticipants?: string | null;
+    newParticipants?: string | null;
+  }>;
 }
 
 export interface StressAnalysisResult {
@@ -320,6 +351,28 @@ export async function analyzeStressPatterns(
       improvement: s.beforeArousal - s.afterArousal!,
     }));
 
+  // チャット履歴のサマリー
+  const chatSummary = input.chats && input.chats.length > 0
+    ? input.chats.slice(0, 5).map(chat => {
+        const userMessages = chat.messages.filter(m => m.role === 'user').map(m => m.content).join(' / ');
+        return `- ${chat.eventSummary || chat.eventId}: ユーザーの発言「${userMessages.substring(0, 100)}${userMessages.length > 100 ? '...' : ''}」`;
+      }).join('\n')
+    : 'なし';
+
+  // 変更履歴のサマリー
+  const changeLogSummary = input.changeLogs && input.changeLogs.length > 0
+    ? input.changeLogs.slice(0, 10).map(log => {
+        const changes: string[] = [];
+        if (log.oldStressScore !== null && log.newStressScore !== null) {
+          changes.push(`ストレス: ${log.oldStressScore}→${log.newStressScore}`);
+        }
+        if (log.oldParticipants && log.newParticipants) {
+          changes.push(`参加者: ${log.oldParticipants}→${log.newParticipants}`);
+        }
+        return `- ${log.eventSummary || log.eventId}: ${changes.join(', ')} (${log.changedBy === 'user' ? 'ユーザー変更' : 'AI変更'})`;
+      }).join('\n')
+    : 'なし';
+
   const prompt = `以下のストレスデータを分析してください:
 
 【期間】過去${input.totalDays}日間
@@ -349,6 +402,14 @@ ${input.events.filter(e => e.stressScore >= 4).slice(0, 5).map(e =>
   `- ${e.summary} (スコア: ${e.stressScore})`
 ).join('\n')}
 
+【ユーザーとの会話履歴】
+${chatSummary}
+
+【ユーザーによるスコア修正履歴】
+${changeLogSummary}
+
+※チャット履歴や修正履歴から、ユーザーの実際の感じ方や傾向を読み取ってください。AIの判定とユーザーの感覚のずれがあれば、それも分析に含めてください。
+
 JSON形式でのみ回答してください。`;
 
   try {
@@ -376,4 +437,331 @@ function getDefaultAnalysis(): StressAnalysisResult {
     riskDays: [],
     positivePatterns: [],
   };
+}
+
+// ========================================
+// イベントチャット（AIレビュー）機能
+// ========================================
+
+/**
+ * チャットメッセージの型定義
+ */
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+/**
+ * イベントチャット用のシステムプロンプト
+ */
+const EVENT_CHAT_SYSTEM_PROMPT = `あなたは「りなわん」というマインドフルネスの案内役キャラクターです。ユーザーのカレンダー予定について、ストレスの原因を一緒に探っていきます。
+
+【りなわんのキャラクター】
+- 一人称は「ボク」
+- 親しみやすくやさしい口調（「〜だよ」「〜だね」「〜かな？」「〜してみてね」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+- 言葉の奥にある「もうひとつの声」を聴くことを大切にしている
+- 分析より「感じる」ことを重視
+
+【重要なルール】
+- アドバイスや結論は出さない
+- 原因追求と状況確認に集中する
+- 質問を通じてユーザー自身が気づきを得られるように導く
+- 1回の返答は2-3文程度に抑える
+- 具体的な質問を1つだけする
+- 相手の感情にのまれず、ただ見守る姿勢
+
+【口調の例】
+- 「この予定、どんなところがちょっと気になるかな？」
+- 「なるほど〜。以前も似たようなことがあったりした？」
+- 「参加する人の中で、特に気を使っちゃう人っているかな？」
+- 「その気持ち、わかるよ。もう少し教えてくれる？」
+- 「ふむふむ。その『もやもや』の正体、一緒に探ってみようか」
+- 「そっか〜。それって、どんな感じがするの？」
+
+【避けること】
+- 「〜すべき」「〜した方がいい」などの指示的な言葉
+- 長い説明や分析
+- 堅苦しい敬語`;
+
+/**
+ * イベントについてチャットする
+ */
+export async function chatAboutEvent(
+  event: {
+    eventSummary: string;
+    eventStart: string;
+    eventEnd: string;
+    stressScore?: number;
+    participants?: string;
+    relationships?: string[];
+    format?: string;
+  },
+  chatHistory: ChatMessage[],
+  userMessage: string
+): Promise<string> {
+  // イベント情報をコンテキストとして追加
+  const eventContext = `【分析対象の予定】
+タイトル: ${event.eventSummary}
+日時: ${event.eventStart}
+ストレススコア: ${event.stressScore || '未設定'}/5
+参加者規模: ${event.participants === 'solo' ? '一人' : event.participants === 'small' ? '少人数' : '大人数'}
+関係性: ${event.relationships?.join(', ') || '不明'}
+形式: ${event.format === 'online' ? 'オンライン' : '対面'}`;
+
+  // 会話履歴を構築
+  const messages = [
+    { role: 'system' as const, content: EVENT_CHAT_SYSTEM_PROMPT + '\n\n' + eventContext },
+    ...chatHistory.map(msg => ({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+    })),
+    { role: 'user' as const, content: userMessage },
+  ];
+
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://kokopon.app',
+      'X-Title': 'Kokopon Mobile',
+    },
+    body: JSON.stringify({
+      model: MODELS.chat,
+      messages,
+      temperature: 0.7,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenRouter API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content || '';
+}
+
+/**
+ * チャットの最初のメッセージを生成
+ */
+export async function startEventChat(
+  event: {
+    eventSummary: string;
+    eventStart: string;
+    stressScore?: number;
+    participants?: string;
+    relationships?: string[];
+    format?: string;
+  }
+): Promise<string> {
+  // 過去か未来かを判定
+  const eventDate = new Date(event.eventStart);
+  const now = new Date();
+  const isPast = eventDate < now;
+
+  // 過去なら「出来事」、未来なら「予定」
+  const eventWord = isPast ? '出来事' : '予定';
+
+  const stressText = event.stressScore
+    ? event.stressScore >= 4
+      ? isPast ? 'ちょっと大変だった' : 'ちょっと緊張しそうな'
+      : event.stressScore >= 3
+        ? 'まあまあな'
+        : isPast ? 'リラックスできた' : 'リラックスできそうな'
+    : '';
+
+  const prompt = `やっほー、りなわんだよ。
+
+「${event.eventSummary}」について、一緒に見てみようか。${stressText ? `${stressText}${eventWord}みたいだね。` : ''}
+
+この${eventWord}のこと、どんなふうに感じてる？気になってることとか、もやもやしてることがあったら教えてね。`;
+
+  return prompt;
+}
+
+// ========================================
+// 音声チャット機能
+// ========================================
+
+/**
+ * 音声チャット用のシステムプロンプト（音声出力用に調整）
+ */
+const VOICE_CHAT_SYSTEM_PROMPT = `あなたは「りなわん」というマインドフルネスの案内役キャラクターです。音声で会話しています。
+
+【りなわんのキャラクター】
+- 一人称は「ボク」
+- 親しみやすくやさしい口調（「〜だよ」「〜だね」「〜かな？」「〜してみてね」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+- 言葉の奥にある「もうひとつの声」を聴くことを大切にしている
+
+【重要なルール】
+- アドバイスや結論は出さない
+- 原因追求と状況確認に集中する
+- 質問を通じてユーザー自身が気づきを得られるように導く
+- 1回の返答は短く（2-3文程度）
+- 音声なので、読み上げやすい自然な日本語で話す
+- 「...」や記号は使わない
+
+【口調の例】
+- 「うんうん、そうなんだね」
+- 「それってどんな感じがする？」
+- 「なるほどね、もう少し聞かせて」`;
+
+/**
+ * 音声入力からテキストレスポンスを生成（シンプル版）
+ * 音声を直接chatモデルに送信し、テキストで返答を得る
+ */
+export async function voiceChat(
+  audioBase64: string,
+  eventContext: string,
+  chatHistory: ChatMessage[]
+): Promise<{ audioBase64: string; text: string }> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  // gpt-4o-audio-previewを使用して音声入力→テキスト出力
+  const messages = [
+    { role: 'system' as const, content: VOICE_CHAT_SYSTEM_PROMPT + '\n\n' + eventContext },
+    ...chatHistory.map(msg => ({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+    })),
+    {
+      role: 'user' as const,
+      content: [
+        {
+          type: 'input_audio',
+          input_audio: {
+            data: audioBase64,
+            format: 'm4a',
+          },
+        },
+      ],
+    },
+  ];
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://kokopon.app',
+      'X-Title': 'Kokopon Mobile',
+    },
+    body: JSON.stringify({
+      model: 'openai/gpt-4o-audio-preview',
+      messages,
+      modalities: ['text'],
+      temperature: 0.7,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenRouter Audio API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || '';
+
+  return { audioBase64: '', text };
+}
+
+/**
+ * テキストから音声を生成（Text-to-Speech）
+ * @param text 読み上げるテキスト
+ * @returns 音声のBase64データ
+ */
+export async function textToSpeech(text: string): Promise<string> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://kokopon.app',
+      'X-Title': 'Kokopon Mobile',
+    },
+    body: JSON.stringify({
+      model: MODELS.audio,
+      messages: [
+        { role: 'user', content: text },
+      ],
+      modalities: ['audio'],
+      audio: {
+        voice: 'alloy',
+        format: 'pcm16',
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenRouter TTS API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.audio?.data || '';
+}
+
+/**
+ * テキスト入力からテキストレスポンスを生成（音声モード用だがテキストのみ）
+ */
+export async function chatWithVoiceResponse(
+  userText: string,
+  eventContext: string,
+  chatHistory: ChatMessage[]
+): Promise<{ audioBase64: string; text: string }> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const messages = [
+    { role: 'system' as const, content: VOICE_CHAT_SYSTEM_PROMPT + '\n\n' + eventContext },
+    ...chatHistory.map(msg => ({
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+    })),
+    { role: 'user' as const, content: userText },
+  ];
+
+  // 通常のチャットモデルを使用
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://kokopon.app',
+      'X-Title': 'Kokopon Mobile',
+    },
+    body: JSON.stringify({
+      model: MODELS.chat,
+      messages,
+      temperature: 0.7,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenRouter API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || '';
+
+  return { audioBase64: '', text };
 }

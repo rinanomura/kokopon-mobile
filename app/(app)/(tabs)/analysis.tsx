@@ -10,16 +10,22 @@ import {
   Dimensions,
   Modal,
   TextInput,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   useGoogleAuth,
   exchangeCodeForToken,
   fetchCalendarEvents,
+  fetchCalendarList,
   countEventsByDate,
   CalendarEvent,
+  CalendarInfo,
 } from '@/lib/googleCalendar';
 import {
   listSessionLogs,
@@ -36,6 +42,9 @@ import {
   Person,
   listPeople,
   createPerson,
+  listEventChatIds,
+  listEventChats,
+  listEventChangeLogs,
 } from '@/lib/api';
 import {
   classifyCalendarEvents,
@@ -158,9 +167,19 @@ export default function AnalysisScreen() {
   const [deletingEvent, setDeletingEvent] = useState<EventClassification | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
 
+  // 3点メニューモーダル
+  const [menuEvent, setMenuEvent] = useState<EventClassification | null>(null);
+  const [menuModalVisible, setMenuModalVisible] = useState(false);
+
   // 参加者（Person）関連
   const [people, setPeople] = useState<Person[]>([]);
   const [newPersonName, setNewPersonName] = useState('');
+
+  // カレンダー選択関連
+  const [calendars, setCalendars] = useState<CalendarInfo[]>([]);
+  const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
+  const [calendarModalVisible, setCalendarModalVisible] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   // チャート拡大/縮小（デフォルトは30日表示）
   const [isChartExpanded, setIsChartExpanded] = useState(false);
@@ -180,8 +199,63 @@ export default function AnalysisScreen() {
   // 日別のイベント数
   const [eventCountByDate, setEventCountByDate] = useState<Record<string, number>>({});
 
+  // チャット保存済みのイベントID
+  const [chatSavedEventIds, setChatSavedEventIds] = useState<Set<string>>(new Set());
+
   // 認証コードの重複使用を防ぐためのRef
   const processedCodeRef = useRef<string | null>(null);
+
+  /**
+   * アプリ起動時に保存済みトークンを読み込む
+   */
+  useEffect(() => {
+    const loadSavedSession = async () => {
+      try {
+        const savedToken = await AsyncStorage.getItem('googleAccessToken');
+        const savedCalendars = await AsyncStorage.getItem('googleCalendars');
+        const savedCalendarIds = await AsyncStorage.getItem('selectedCalendarIds');
+
+        if (savedToken && savedCalendars) {
+          setAccessToken(savedToken);
+          setCalendars(JSON.parse(savedCalendars));
+          setIsConnected(true);
+
+          const calendarIds = savedCalendarIds ? JSON.parse(savedCalendarIds) : undefined;
+          if (calendarIds) {
+            setSelectedCalendarIds(calendarIds);
+          }
+
+          await fetchData(savedToken, calendarIds);
+        }
+      } catch (error) {
+        console.error('Load saved session error:', error);
+      }
+    };
+
+    loadSavedSession();
+  }, []);
+
+  /**
+   * 画面がフォーカスされた時に分類データとチャット情報を再取得
+   */
+  useFocusEffect(
+    useCallback(() => {
+      const refreshData = async () => {
+        try {
+          // 分類データを取得
+          const classifications = await listEventClassifications();
+          setSavedClassifications(classifications);
+
+          // チャット保存済みのイベントIDを取得
+          const chatIds = await listEventChatIds();
+          setChatSavedEventIds(chatIds);
+        } catch (error) {
+          console.error('Refresh data error:', error);
+        }
+      };
+      refreshData();
+    }, [])
+  );
 
   /**
    * OAuth レスポンス処理
@@ -206,8 +280,33 @@ export default function AnalysisScreen() {
     try {
       const token = await exchangeCodeForToken(code, codeVerifier, redirectUri);
       if (token) {
+        setAccessToken(token);
         setIsConnected(true);
-        await fetchData(token);
+
+        // アクセストークンを保存
+        await AsyncStorage.setItem('googleAccessToken', token);
+
+        // カレンダー一覧を取得
+        const calendarList = await fetchCalendarList(token);
+        setCalendars(calendarList);
+
+        // カレンダー一覧を保存
+        await AsyncStorage.setItem('googleCalendars', JSON.stringify(calendarList));
+
+        // 保存済みの選択カレンダーを読み込む
+        const savedCalendarIds = await AsyncStorage.getItem('selectedCalendarIds');
+        let calendarIdsToUse: string[];
+
+        if (savedCalendarIds) {
+          calendarIdsToUse = JSON.parse(savedCalendarIds);
+        } else {
+          // 初回はprimaryカレンダーのみ選択
+          const primaryCalendar = calendarList.find(c => c.primary);
+          calendarIdsToUse = primaryCalendar ? [primaryCalendar.id] : [];
+        }
+        setSelectedCalendarIds(calendarIdsToUse);
+
+        await fetchData(token, calendarIdsToUse);
       } else {
         Alert.alert('エラー', '認証に失敗しました');
       }
@@ -222,13 +321,13 @@ export default function AnalysisScreen() {
   /**
    * カレンダーとセッションデータを取得
    */
-  const fetchData = async (token: string) => {
+  const fetchData = async (token: string, calendarIds?: string[]) => {
     setLoading(true);
     try {
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-      const events = await fetchCalendarEvents(token, thirtyDaysAgo, now);
+      const events = await fetchCalendarEvents(token, thirtyDaysAgo, now, calendarIds);
       setCalendarEvents(events);
       setEventCountByDate(countEventsByDate(events));
 
@@ -326,9 +425,74 @@ export default function AnalysisScreen() {
   }, [calendarEvents, savedClassifications]);
 
   /**
+   * すべてのイベントを再分類（既存の分類を削除して再度AI分類）
+   */
+  const handleReclassifyAll = useCallback(async () => {
+    if (calendarEvents.length === 0) {
+      Alert.alert('エラー', '分類するイベントがありません');
+      return;
+    }
+
+    // Web環境ではwindow.confirmを使用
+    const confirmed = window.confirm(
+      `${savedClassifications.length}件の分類データを削除して、${calendarEvents.length}件を再分類します。よろしいですか？`
+    );
+
+    if (!confirmed) return;
+
+    setClassifying(true);
+    try {
+      // 既存の分類をすべて削除
+      for (const classification of savedClassifications) {
+        await deleteEventClassification(classification.eventId);
+      }
+      setSavedClassifications([]);
+
+      // 全イベントをAI分類
+      const userId = await getUserId();
+      const classified = await classifyCalendarEvents(calendarEvents);
+
+      // DBに保存
+      const inputs = classified.map((event) => ({
+        userId,
+        eventId: event.id,
+        eventSummary: event.summary,
+        eventStart: event.start,
+        eventEnd: event.end,
+        participants: event.classification.participants as EventClassificationParticipants,
+        relationships: event.classification.relationships as EventClassificationRelationship[] | null,
+        format: event.classification.format as EventClassificationFormat,
+        eventType: event.classification.eventType,
+        stressScore: event.classification.stressScore,
+        isManuallyEdited: false,
+        source: 'ai' as const,
+      }));
+
+      const saved = await batchCreateEventClassifications(inputs);
+      setSavedClassifications(saved);
+
+      Alert.alert('完了', `${saved.length}件のイベントを再分類しました`);
+    } catch (error) {
+      console.error('Reclassify error:', error);
+      Alert.alert('エラー', '再分類中にエラーが発生しました');
+    } finally {
+      setClassifying(false);
+    }
+  }, [calendarEvents, savedClassifications]);
+
+  /**
+   * 3点メニューを開く
+   */
+  const handleMenuOpen = (event: EventClassification) => {
+    setMenuEvent(event);
+    setMenuModalVisible(true);
+  };
+
+  /**
    * 編集を開始
    */
   const handleEditStart = (event: EventClassification) => {
+    setMenuModalVisible(false);
     setEditingEvent({ ...event });
     setEditModalVisible(true);
   };
@@ -337,8 +501,28 @@ export default function AnalysisScreen() {
    * 削除を開始
    */
   const handleDeleteStart = (event: EventClassification) => {
+    setMenuModalVisible(false);
     setDeletingEvent(event);
     setDeleteModalVisible(true);
+  };
+
+  /**
+   * AIレビューを開始
+   */
+  const handleAIReviewStart = (event: EventClassification) => {
+    router.push({
+      pathname: '/event-chat',
+      params: {
+        eventId: event.eventId,
+        eventSummary: event.eventSummary,
+        eventStart: event.eventStart,
+        eventEnd: event.eventEnd,
+        stressScore: event.stressScore?.toString() || '',
+        participants: event.participants || '',
+        relationships: event.relationships?.join(',') || '',
+        format: event.format || '',
+      },
+    });
   };
 
   /**
@@ -348,9 +532,9 @@ export default function AnalysisScreen() {
     if (!deletingEvent) return;
 
     try {
-      await deleteEventClassification(deletingEvent.id);
+      await deleteEventClassification(deletingEvent.eventId);
       setSavedClassifications(prev =>
-        prev.filter(c => c.id !== deletingEvent.id)
+        prev.filter(c => c.eventId !== deletingEvent.eventId)
       );
       setDeleteModalVisible(false);
       setDeletingEvent(null);
@@ -418,7 +602,7 @@ export default function AnalysisScreen() {
     if (!editingEvent) return;
 
     try {
-      const updated = await updateEventClassification(editingEvent.id, {
+      const updated = await updateEventClassification(editingEvent.eventId, {
         eventSummary: editingEvent.eventSummary,
         participants: editingEvent.participants,
         relationships: editingEvent.relationships,
@@ -429,13 +613,48 @@ export default function AnalysisScreen() {
       });
 
       setSavedClassifications(prev =>
-        prev.map(c => c.id === updated.id ? updated : c)
+        prev.map(c => c.eventId === updated.eventId ? updated : c)
       );
       setEditModalVisible(false);
       setEditingEvent(null);
     } catch (error) {
       console.error('Update error:', error);
       Alert.alert('エラー', '更新に失敗しました');
+    }
+  };
+
+  /**
+   * カレンダーの選択をトグル
+   */
+  const toggleCalendar = (calendarId: string) => {
+    setSelectedCalendarIds(prev => {
+      if (prev.includes(calendarId)) {
+        return prev.filter(id => id !== calendarId);
+      } else {
+        return [...prev, calendarId];
+      }
+    });
+  };
+
+  /**
+   * カレンダー選択を保存して再取得
+   */
+  const saveCalendarSelection = async () => {
+    if (selectedCalendarIds.length === 0) {
+      Alert.alert('エラー', '少なくとも1つのカレンダーを選択してください');
+      return;
+    }
+
+    try {
+      await AsyncStorage.setItem('selectedCalendarIds', JSON.stringify(selectedCalendarIds));
+      setCalendarModalVisible(false);
+
+      if (accessToken) {
+        await fetchData(accessToken, selectedCalendarIds);
+      }
+    } catch (error) {
+      console.error('Save calendar selection error:', error);
+      Alert.alert('エラー', 'カレンダー設定の保存に失敗しました');
     }
   };
 
@@ -687,29 +906,47 @@ export default function AnalysisScreen() {
   const renderCheckTab = () => {
     return (
       <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
-        {/* AI分類ボタン（未分類がある場合のみ表示） */}
-        {unclassifiedCount > 0 && (
-          <TouchableOpacity
-            style={styles.classifyButton}
-            onPress={handleClassify}
-            disabled={classifying}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={classifying ? ['#A0AEC0', '#A0AEC0'] : ['#9F7AEA', '#805AD5']}
-              style={styles.classifyButtonGradient}
+        {/* ボタンエリア */}
+        <View style={styles.buttonArea}>
+          {/* AI分類ボタン（未分類がある場合のみ表示） */}
+          {unclassifiedCount > 0 && (
+            <TouchableOpacity
+              style={styles.classifyButton}
+              onPress={handleClassify}
+              disabled={classifying}
+              activeOpacity={0.8}
             >
-              {classifying ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Ionicons name="sparkles" size={18} color="#FFF" />
-              )}
-              <Text style={styles.classifyButtonText}>
-                {classifying ? 'AI分類中...' : `${unclassifiedCount}件を分析`}
+              <LinearGradient
+                colors={classifying ? ['#A0AEC0', '#A0AEC0'] : ['#9F7AEA', '#805AD5']}
+                style={styles.classifyButtonGradient}
+              >
+                {classifying ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Ionicons name="sparkles" size={18} color="#FFF" />
+                )}
+                <Text style={styles.classifyButtonText}>
+                  {classifying ? 'AI分類中...' : `${unclassifiedCount}件を分析`}
+                </Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
+          {/* 再分類ボタン（分類済みがある場合に表示） */}
+          {savedClassifications.length > 0 && (
+            <TouchableOpacity
+              style={styles.reclassifyButton}
+              onPress={handleReclassifyAll}
+              disabled={classifying}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="refresh" size={16} color={classifying ? '#A0AEC0' : '#805AD5'} />
+              <Text style={[styles.reclassifyButtonText, classifying && { color: '#A0AEC0' }]}>
+                すべて再分類
               </Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* 分類結果（日付グループ） */}
         {groupedByDate.length > 0 ? (
@@ -724,11 +961,9 @@ export default function AnalysisScreen() {
               {events.map((event) => {
                 const isUnclassified = event.stressScore === null;
                 return (
-                  <TouchableOpacity
-                    key={event.id}
+                  <View
+                    key={event.eventId}
                     style={[styles.eventCard, isUnclassified && styles.eventCardUnclassified]}
-                    onPress={() => !isUnclassified && handleEditStart(event)}
-                    activeOpacity={isUnclassified ? 1 : 0.7}
                   >
                     <View style={styles.eventHeader}>
                       <View style={styles.eventTitleRow}>
@@ -805,19 +1040,43 @@ export default function AnalysisScreen() {
                         )}
                       </View>
                       {!isUnclassified && (
-                        <TouchableOpacity
-                          style={styles.deleteButton}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleDeleteStart(event);
-                          }}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Ionicons name="trash-outline" size={16} color="#E53E3E" />
-                        </TouchableOpacity>
+                        <View style={styles.eventActions}>
+                          {/* AIレビューボタン */}
+                          <TouchableOpacity
+                            style={styles.aiReviewButton}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleAIReviewStart(event);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <View style={styles.rinawanIconContainer}>
+                              <Image
+                                source={require('@/assets/images/rinawan_tilting_head.gif')}
+                                style={styles.rinawanIcon}
+                              />
+                              {chatSavedEventIds.has(event.eventId) && (
+                                <View style={styles.chatSavedBadge}>
+                                  <Ionicons name="checkmark" size={10} color="#FFF" />
+                                </View>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                          {/* 3点メニューボタン */}
+                          <TouchableOpacity
+                            style={styles.menuButton}
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleMenuOpen(event);
+                            }}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          >
+                            <Ionicons name="ellipsis-vertical" size={18} color="#718096" />
+                          </TouchableOpacity>
+                        </View>
                       )}
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 );
               })}
             </View>
@@ -979,6 +1238,40 @@ export default function AnalysisScreen() {
 
     setAnalyzing(true);
     try {
+      // EventChatsとEventChangeLogsを取得
+      const [eventChats, eventChangeLogs] = await Promise.all([
+        listEventChats(),
+        listEventChangeLogs(),
+      ]);
+
+      // イベントIDからサマリーを取得するマップを作成
+      const eventSummaryMap = new Map<string, string>();
+      savedClassifications.forEach(e => {
+        eventSummaryMap.set(e.eventId, e.eventSummary);
+      });
+
+      // チャットデータを分析用に整形
+      const chatsForAnalysis = eventChats.map(chat => ({
+        eventId: chat.eventId,
+        eventSummary: eventSummaryMap.get(chat.eventId),
+        messages: (chat.messages || []).map(m => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+      }));
+
+      // 変更ログを分析用に整形
+      const changeLogsForAnalysis = eventChangeLogs.map(log => ({
+        eventId: log.eventId,
+        eventSummary: eventSummaryMap.get(log.eventId),
+        timestamp: log.timestamp,
+        changedBy: log.changedBy as 'ai' | 'user',
+        oldStressScore: log.oldStressScore,
+        newStressScore: log.newStressScore,
+        oldParticipants: log.oldParticipants,
+        newParticipants: log.newParticipants,
+      }));
+
       const result = await analyzeStressPatterns({
         events: savedClassifications.map(e => ({
           date: e.eventStart,
@@ -994,6 +1287,8 @@ export default function AnalysisScreen() {
           afterArousal: s.afterArousal ?? undefined,
         })),
         totalDays: 30,
+        chats: chatsForAnalysis,
+        changeLogs: changeLogsForAnalysis,
       });
       setAnalysisResult(result);
     } catch (error) {
@@ -1357,6 +1652,46 @@ export default function AnalysisScreen() {
   );
 
   /**
+   * 3点メニューモーダル
+   */
+  const renderMenuModal = () => (
+    <Modal
+      visible={menuModalVisible}
+      animationType="fade"
+      transparent={true}
+      onRequestClose={() => setMenuModalVisible(false)}
+    >
+      <TouchableOpacity
+        style={styles.menuModalOverlay}
+        activeOpacity={1}
+        onPress={() => setMenuModalVisible(false)}
+      >
+        <View style={styles.menuModalContent}>
+          {/* 変更ボタン */}
+          <TouchableOpacity
+            style={styles.menuModalItem}
+            onPress={() => menuEvent && handleEditStart(menuEvent)}
+          >
+            <Ionicons name="create-outline" size={20} color="#4A5568" />
+            <Text style={styles.menuModalItemText}>変更</Text>
+          </TouchableOpacity>
+
+          <View style={styles.menuModalDivider} />
+
+          {/* 削除ボタン */}
+          <TouchableOpacity
+            style={styles.menuModalItem}
+            onPress={() => menuEvent && handleDeleteStart(menuEvent)}
+          >
+            <Ionicons name="trash-outline" size={20} color="#E53E3E" />
+            <Text style={styles.menuModalItemTextDanger}>この活動を除外</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  /**
    * チャート詳細モーダル
    */
   const renderChartDetailModal = () => (
@@ -1458,12 +1793,96 @@ export default function AnalysisScreen() {
     </Modal>
   );
 
+  /**
+   * カレンダー選択モーダル
+   */
+  const renderCalendarModal = () => (
+    <Modal
+      visible={calendarModalVisible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setCalendarModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.calendarModalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>カレンダーを選択</Text>
+            <TouchableOpacity onPress={() => setCalendarModalVisible(false)}>
+              <Ionicons name="close" size={24} color="#4A5568" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.calendarListContainer}>
+            {calendars.map((calendar) => {
+              const isSelected = selectedCalendarIds.includes(calendar.id);
+              return (
+                <TouchableOpacity
+                  key={calendar.id}
+                  style={styles.calendarItem}
+                  onPress={() => toggleCalendar(calendar.id)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.calendarItemLeft}>
+                    <View
+                      style={[
+                        styles.calendarColorDot,
+                        { backgroundColor: calendar.backgroundColor || '#4285F4' },
+                      ]}
+                    />
+                    <View style={styles.calendarItemInfo}>
+                      <Text style={styles.calendarItemName} numberOfLines={1}>
+                        {calendar.summary}
+                      </Text>
+                      {calendar.primary && (
+                        <Text style={styles.calendarItemPrimary}>メイン</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Ionicons
+                    name={isSelected ? 'checkbox' : 'square-outline'}
+                    size={24}
+                    color={isSelected ? '#805AD5' : '#A0AEC0'}
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.calendarModalFooter}>
+            <Text style={styles.calendarModalHint}>
+              {selectedCalendarIds.length}個のカレンダーを選択中
+            </Text>
+            <TouchableOpacity
+              style={styles.calendarSaveButton}
+              onPress={saveCalendarSelection}
+            >
+              <Text style={styles.calendarSaveButtonText}>適用</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* ヘッダー */}
         <View style={styles.header}>
-          <Text style={styles.title}>分析</Text>
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>分析</Text>
+            {isConnected && calendars.length > 1 && (
+              <TouchableOpacity
+                style={styles.calendarSelectButton}
+                onPress={() => setCalendarModalVisible(true)}
+              >
+                <Ionicons name="calendar" size={16} color="#805AD5" />
+                <Text style={styles.calendarSelectText}>
+                  {selectedCalendarIds.length}個
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
           {isConnected && (
             <Text style={styles.summaryText}>
               {calendarEvents.length}予定 / {savedClassifications.length}分類済
@@ -1538,6 +1957,8 @@ export default function AnalysisScreen() {
         {renderEditModal()}
         {renderDeleteModal()}
         {renderChartDetailModal()}
+        {renderCalendarModal()}
+        {renderMenuModal()}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -1687,6 +2108,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  buttonArea: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  reclassifyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    gap: 6,
+  },
+  reclassifyButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#805AD5',
+  },
   dateHeader: {
     paddingVertical: 8,
     paddingHorizontal: 4,
@@ -1784,6 +2225,72 @@ const styles = StyleSheet.create({
   deleteButton: {
     padding: 4,
     marginLeft: 8,
+  },
+  eventActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  aiReviewButton: {
+    padding: 2,
+  },
+  rinawanIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#7AD7F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rinawanIcon: {
+    width: 32,
+    height: 32,
+  },
+  chatSavedBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#B794F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuButton: {
+    padding: 4,
+  },
+  // 3点メニューモーダル
+  menuModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    width: 200,
+    overflow: 'hidden',
+  },
+  menuModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  menuModalItemText: {
+    fontSize: 15,
+    color: '#4A5568',
+  },
+  menuModalItemTextDanger: {
+    fontSize: 15,
+    color: '#E53E3E',
+  },
+  menuModalDivider: {
+    height: 1,
+    backgroundColor: '#EDF2F7',
   },
   tag: {
     backgroundColor: '#EDF2F7',
@@ -2471,5 +2978,93 @@ const styles = StyleSheet.create({
   chartDetailSessionText: {
     fontSize: 13,
     color: '#805AD5',
+  },
+  // ヘッダー用スタイル
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  calendarSelectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3E8FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  calendarSelectText: {
+    fontSize: 12,
+    color: '#805AD5',
+    fontWeight: '500',
+  },
+  // カレンダー選択モーダル
+  calendarModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+  },
+  calendarListContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    maxHeight: 400,
+  },
+  calendarItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EDF2F7',
+  },
+  calendarItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  calendarColorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+  },
+  calendarItemInfo: {
+    flex: 1,
+  },
+  calendarItemName: {
+    fontSize: 15,
+    color: '#4A5568',
+    fontWeight: '500',
+  },
+  calendarItemPrimary: {
+    fontSize: 11,
+    color: '#805AD5',
+    marginTop: 2,
+  },
+  calendarModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+  },
+  calendarModalHint: {
+    fontSize: 13,
+    color: '#718096',
+  },
+  calendarSaveButton: {
+    backgroundColor: '#805AD5',
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  calendarSaveButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

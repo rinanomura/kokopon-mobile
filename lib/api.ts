@@ -201,12 +201,17 @@ export const getSessionLogQuery = /* GraphQL */ `
 export const createEventClassificationMutation = /* GraphQL */ `
   mutation CreateEventClassification($input: CreateEventClassificationInput!) {
     createEventClassification(input: $input) {
-      id
       userId
       eventId
       eventSummary
       eventStart
       eventEnd
+      eventDescription
+      eventLocation
+      eventAttendees
+      attendeeCount
+      isRecurring
+      calendarId
       participants
       relationships
       format
@@ -226,12 +231,17 @@ export const createEventClassificationMutation = /* GraphQL */ `
 export const updateEventClassificationMutation = /* GraphQL */ `
   mutation UpdateEventClassification($input: UpdateEventClassificationInput!) {
     updateEventClassification(input: $input) {
-      id
       userId
       eventId
       eventSummary
       eventStart
       eventEnd
+      eventDescription
+      eventLocation
+      eventAttendees
+      attendeeCount
+      isRecurring
+      calendarId
       participants
       relationships
       format
@@ -251,22 +261,27 @@ export const updateEventClassificationMutation = /* GraphQL */ `
 export const deleteEventClassificationMutation = /* GraphQL */ `
   mutation DeleteEventClassification($input: DeleteEventClassificationInput!) {
     deleteEventClassification(input: $input) {
-      id
+      eventId
     }
   }
 `;
 
-// EventClassification 一覧取得
+// EventClassification 一覧取得（userIdで取得）
 export const listEventClassificationsQuery = /* GraphQL */ `
-  query ListEventClassifications($filter: ModelEventClassificationFilterInput, $limit: Int, $nextToken: String) {
-    listEventClassifications(filter: $filter, limit: $limit, nextToken: $nextToken) {
+  query ListEventClassificationsByUserId($userId: String!, $limit: Int, $nextToken: String) {
+    listEventClassificationsByUserId(userId: $userId, limit: $limit, nextToken: $nextToken) {
       items {
-        id
         userId
         eventId
         eventSummary
         eventStart
         eventEnd
+        eventDescription
+        eventLocation
+        eventAttendees
+        attendeeCount
+        isRecurring
+        calendarId
         participants
         relationships
         format
@@ -358,6 +373,12 @@ export interface EventClassificationInput {
   eventSummary: string;
   eventStart: string;
   eventEnd: string;
+  eventDescription?: string;
+  eventLocation?: string;
+  eventAttendees?: string[] | null;
+  attendeeCount?: number;
+  isRecurring?: boolean;
+  calendarId?: string;
   participants?: EventClassificationParticipants;
   relationships?: EventClassificationRelationship[] | null;
   format?: EventClassificationFormat;
@@ -369,7 +390,6 @@ export interface EventClassificationInput {
 }
 
 export interface EventClassification extends EventClassificationInput {
-  id: string;
   createdAt: string;
   updatedAt: string;
   owner?: string;
@@ -589,14 +609,14 @@ export async function createEventClassification(input: EventClassificationInput)
  * EventClassification を更新
  */
 export async function updateEventClassification(
-  id: string,
+  eventId: string,
   updates: Partial<Omit<EventClassificationInput, 'userId' | 'eventId'>>
 ): Promise<EventClassification> {
   const result = await getClient().graphql({
     query: updateEventClassificationMutation,
     variables: {
       input: {
-        id,
+        eventId,
         ...updates,
       },
     },
@@ -607,24 +627,26 @@ export async function updateEventClassification(
 /**
  * EventClassification を削除
  */
-export async function deleteEventClassification(id: string): Promise<void> {
+export async function deleteEventClassification(eventId: string): Promise<void> {
   await getClient().graphql({
     query: deleteEventClassificationMutation,
     variables: {
-      input: { id },
+      input: { eventId },
     },
   });
 }
 
 /**
- * EventClassification 一覧を取得
+ * EventClassification 一覧を取得（userIdで取得）
  */
-export async function listEventClassifications(): Promise<EventClassification[]> {
+export async function listEventClassifications(userId?: string): Promise<EventClassification[]> {
+  // userIdが指定されていない場合は現在のユーザーIDを取得
+  const targetUserId = userId || await getUserId();
   const result = await getClient().graphql({
     query: listEventClassificationsQuery,
-    variables: {},
+    variables: { userId: targetUserId },
   });
-  return (result as any).data.listEventClassifications.items;
+  return (result as any).data.listEventClassificationsByUserId.items;
 }
 
 /**
@@ -694,4 +716,296 @@ export async function listPeople(): Promise<Person[]> {
     variables: {},
   });
   return (result as any).data.listPeople.items;
+}
+
+// ========================================
+// EventChangeLog 関連のクエリ・ミューテーション
+// ========================================
+
+// EventChangeLog の changedBy 型
+export type EventChangeLogChangedBy = 'ai' | 'user';
+
+// EventChangeLog 型
+export interface EventChangeLog {
+  id: string;
+  userId: string;
+  eventId: string;
+  timestamp: string;
+  changedBy: EventChangeLogChangedBy;
+  oldStressScore?: number | null;
+  newStressScore?: number | null;
+  oldParticipants?: EventClassificationParticipants | null;
+  newParticipants?: EventClassificationParticipants | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// EventChangeLog 作成用入力型
+export interface EventChangeLogInput {
+  userId: string;
+  eventId: string;
+  timestamp: string;
+  changedBy: EventChangeLogChangedBy;
+  oldStressScore?: number | null;
+  newStressScore?: number | null;
+  oldParticipants?: EventClassificationParticipants | null;
+  newParticipants?: EventClassificationParticipants | null;
+}
+
+// EventChangeLog 作成
+export const createEventChangeLogMutation = /* GraphQL */ `
+  mutation CreateEventChangeLog($input: CreateEventChangeLogInput!) {
+    createEventChangeLog(input: $input) {
+      id
+      userId
+      eventId
+      timestamp
+      changedBy
+      oldStressScore
+      newStressScore
+      oldParticipants
+      newParticipants
+      createdAt
+      updatedAt
+      owner
+    }
+  }
+`;
+
+/**
+ * EventChangeLog を作成
+ */
+export async function createEventChangeLog(
+  input: EventChangeLogInput
+): Promise<EventChangeLog> {
+  const result = await getClient().graphql({
+    query: createEventChangeLogMutation,
+    variables: { input },
+  });
+  return (result as any).data.createEventChangeLog;
+}
+
+// EventChangeLog 一覧取得（userIdで取得）
+export const listEventChangeLogsByUserIdQuery = /* GraphQL */ `
+  query ListChangeLogsByUserId($userId: String!, $limit: Int, $nextToken: String) {
+    listChangeLogsByUserId(userId: $userId, limit: $limit, nextToken: $nextToken) {
+      items {
+        id
+        userId
+        eventId
+        timestamp
+        changedBy
+        oldStressScore
+        newStressScore
+        oldParticipants
+        newParticipants
+        createdAt
+        updatedAt
+        owner
+      }
+      nextToken
+    }
+  }
+`;
+
+/**
+ * ユーザーのEventChangeLog一覧を取得
+ */
+export async function listEventChangeLogs(): Promise<EventChangeLog[]> {
+  try {
+    const userId = await getUserId();
+    const result = await getClient().graphql({
+      query: listEventChangeLogsByUserIdQuery,
+      variables: { userId, limit: 1000 },
+    });
+    return (result as any).data.listChangeLogsByUserId?.items || [];
+  } catch (error) {
+    console.error('List EventChangeLog error:', error);
+    return [];
+  }
+}
+
+// ========================================
+// EventChat 関連のクエリ・ミューテーション
+// ========================================
+
+// EventChat のメッセージ型（openRouterのChatMessageと同じ構造）
+export interface EventChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+// EventChat 型
+export interface EventChat {
+  eventId: string;
+  userId: string;
+  messages: EventChatMessage[] | null;
+  updatedAt: string | null;
+  createdAt: string;
+  owner?: string;
+}
+
+// EventChat 作成用入力型
+export interface EventChatInput {
+  eventId: string;
+  userId: string;
+  messages?: EventChatMessage[] | null;
+  updatedAt?: string | null;
+}
+
+// EventChat 作成
+export const createEventChatMutation = /* GraphQL */ `
+  mutation CreateEventChat($input: CreateEventChatInput!) {
+    createEventChat(input: $input) {
+      eventId
+      userId
+      messages
+      updatedAt
+      createdAt
+      owner
+    }
+  }
+`;
+
+// EventChat 更新
+export const updateEventChatMutation = /* GraphQL */ `
+  mutation UpdateEventChat($input: UpdateEventChatInput!) {
+    updateEventChat(input: $input) {
+      eventId
+      userId
+      messages
+      updatedAt
+      createdAt
+      owner
+    }
+  }
+`;
+
+// EventChat 取得
+export const getEventChatQuery = /* GraphQL */ `
+  query GetEventChat($eventId: String!) {
+    getEventChat(eventId: $eventId) {
+      eventId
+      userId
+      messages
+      updatedAt
+      createdAt
+      owner
+    }
+  }
+`;
+
+// EventChat 一覧取得（userIdで取得）
+export const listEventChatsByUserIdQuery = /* GraphQL */ `
+  query ListEventChatsByUserId($userId: String!, $limit: Int, $nextToken: String) {
+    listEventChatsByUserId(userId: $userId, limit: $limit, nextToken: $nextToken) {
+      items {
+        eventId
+        userId
+        messages
+        updatedAt
+        createdAt
+        owner
+      }
+      nextToken
+    }
+  }
+`;
+
+/**
+ * EventChat を取得
+ */
+export async function getEventChat(eventId: string): Promise<EventChat | null> {
+  try {
+    const result = await getClient().graphql({
+      query: getEventChatQuery,
+      variables: { eventId },
+    });
+    return (result as any).data.getEventChat;
+  } catch (error) {
+    console.error('Get EventChat error:', error);
+    return null;
+  }
+}
+
+/**
+ * ユーザーのEventChat一覧を取得し、eventIdのセットを返す
+ */
+export async function listEventChatIds(): Promise<Set<string>> {
+  try {
+    const userId = await getUserId();
+    const result = await getClient().graphql({
+      query: listEventChatsByUserIdQuery,
+      variables: { userId, limit: 1000 },
+    });
+    const items = (result as any).data.listEventChatsByUserId?.items || [];
+    return new Set(items.map((item: EventChat) => item.eventId));
+  } catch (error) {
+    console.error('List EventChat error:', error);
+    return new Set();
+  }
+}
+
+/**
+ * ユーザーのEventChat一覧を取得
+ */
+export async function listEventChats(): Promise<EventChat[]> {
+  try {
+    const userId = await getUserId();
+    const result = await getClient().graphql({
+      query: listEventChatsByUserIdQuery,
+      variables: { userId, limit: 1000 },
+    });
+    const items = (result as any).data.listEventChatsByUserId?.items || [];
+    // messagesがJSON文字列の場合はパース
+    return items.map((item: any) => ({
+      ...item,
+      messages: typeof item.messages === 'string' ? JSON.parse(item.messages) : item.messages,
+    }));
+  } catch (error) {
+    console.error('List EventChats error:', error);
+    return [];
+  }
+}
+
+/**
+ * EventChat を作成または更新（upsert）
+ */
+export async function upsertEventChat(
+  eventId: string,
+  userId: string,
+  messages: EventChatMessage[]
+): Promise<EventChat> {
+  const existingChat = await getEventChat(eventId);
+  const now = new Date().toISOString();
+
+  if (existingChat) {
+    // 更新
+    const result = await getClient().graphql({
+      query: updateEventChatMutation,
+      variables: {
+        input: {
+          eventId,
+          messages: JSON.stringify(messages),
+          updatedAt: now,
+        },
+      },
+    });
+    return (result as any).data.updateEventChat;
+  } else {
+    // 作成
+    const result = await getClient().graphql({
+      query: createEventChatMutation,
+      variables: {
+        input: {
+          eventId,
+          userId,
+          messages: JSON.stringify(messages),
+          updatedAt: now,
+        },
+      },
+    });
+    return (result as any).data.createEventChat;
+  }
 }

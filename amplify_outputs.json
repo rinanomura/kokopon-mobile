@@ -157,8 +157,99 @@
             "sortKeyFieldNames": []
           }
         },
-        "EventClassification": {
-          "name": "EventClassification",
+        "EventChat": {
+          "name": "EventChat",
+          "fields": {
+            "eventId": {
+              "name": "eventId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "messages": {
+              "name": "messages",
+              "isArray": false,
+              "type": "AWSJSON",
+              "isRequired": false,
+              "attributes": []
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "EventChats",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "fields": [
+                  "eventId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "eventChatsByUserId",
+                "queryField": "listEventChatsByUserId",
+                "fields": [
+                  "userId"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "owner",
+                    "allow": "owner",
+                    "identityClaim": "cognito:username",
+                    "operations": [
+                      "create",
+                      "update",
+                      "delete",
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": true,
+            "primaryKeyFieldName": "eventId",
+            "sortKeyFieldNames": []
+          }
+        },
+        "EventChangeLog": {
+          "name": "EventChangeLog",
           "fields": {
             "id": {
               "name": "id",
@@ -167,6 +258,141 @@
               "isRequired": true,
               "attributes": []
             },
+            "userId": {
+              "name": "userId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "eventId": {
+              "name": "eventId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": true,
+              "attributes": []
+            },
+            "timestamp": {
+              "name": "timestamp",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": true,
+              "attributes": []
+            },
+            "changedBy": {
+              "name": "changedBy",
+              "isArray": false,
+              "type": {
+                "enum": "EventChangeLogChangedBy"
+              },
+              "isRequired": false,
+              "attributes": []
+            },
+            "oldStressScore": {
+              "name": "oldStressScore",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "newStressScore": {
+              "name": "newStressScore",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "oldParticipants": {
+              "name": "oldParticipants",
+              "isArray": false,
+              "type": {
+                "enum": "EventChangeLogOldParticipants"
+              },
+              "isRequired": false,
+              "attributes": []
+            },
+            "newParticipants": {
+              "name": "newParticipants",
+              "isArray": false,
+              "type": {
+                "enum": "EventChangeLogNewParticipants"
+              },
+              "isRequired": false,
+              "attributes": []
+            },
+            "createdAt": {
+              "name": "createdAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            },
+            "updatedAt": {
+              "name": "updatedAt",
+              "isArray": false,
+              "type": "AWSDateTime",
+              "isRequired": false,
+              "attributes": [],
+              "isReadOnly": true
+            }
+          },
+          "syncable": true,
+          "pluralName": "EventChangeLogs",
+          "attributes": [
+            {
+              "type": "model",
+              "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "eventChangeLogsByUserId",
+                "queryField": "listChangeLogsByUserId",
+                "fields": [
+                  "userId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "eventChangeLogsByEventId",
+                "queryField": "listChangeLogsByEventId",
+                "fields": [
+                  "eventId"
+                ]
+              }
+            },
+            {
+              "type": "auth",
+              "properties": {
+                "rules": [
+                  {
+                    "provider": "userPools",
+                    "ownerField": "owner",
+                    "allow": "owner",
+                    "identityClaim": "cognito:username",
+                    "operations": [
+                      "create",
+                      "update",
+                      "delete",
+                      "read"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "primaryKeyInfo": {
+            "isCustomPrimaryKey": false,
+            "primaryKeyFieldName": "id",
+            "sortKeyFieldNames": []
+          }
+        },
+        "EventClassification": {
+          "name": "EventClassification",
+          "fields": {
             "userId": {
               "name": "userId",
               "isArray": false,
@@ -200,6 +426,49 @@
               "isArray": false,
               "type": "AWSDateTime",
               "isRequired": true,
+              "attributes": []
+            },
+            "eventDescription": {
+              "name": "eventDescription",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "eventLocation": {
+              "name": "eventLocation",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
+              "attributes": []
+            },
+            "eventAttendees": {
+              "name": "eventAttendees",
+              "isArray": true,
+              "type": "String",
+              "isRequired": false,
+              "attributes": [],
+              "isArrayNullable": true
+            },
+            "attendeeCount": {
+              "name": "attendeeCount",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "isRecurring": {
+              "name": "isRecurring",
+              "isArray": false,
+              "type": "Boolean",
+              "isRequired": false,
+              "attributes": []
+            },
+            "calendarId": {
+              "name": "calendarId",
+              "isArray": false,
+              "type": "String",
+              "isRequired": false,
               "attributes": []
             },
             "participants": {
@@ -291,6 +560,24 @@
               "properties": {}
             },
             {
+              "type": "key",
+              "properties": {
+                "fields": [
+                  "eventId"
+                ]
+              }
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "eventClassificationsByUserId",
+                "queryField": "listEventClassificationsByUserId",
+                "fields": [
+                  "userId"
+                ]
+              }
+            },
+            {
               "type": "auth",
               "properties": {
                 "rules": [
@@ -311,8 +598,8 @@
             }
           ],
           "primaryKeyInfo": {
-            "isCustomPrimaryKey": false,
-            "primaryKeyFieldName": "id",
+            "isCustomPrimaryKey": true,
+            "primaryKeyFieldName": "eventId",
             "sortKeyFieldNames": []
           }
         },
@@ -392,6 +679,29 @@
         }
       },
       "enums": {
+        "EventChangeLogChangedBy": {
+          "name": "EventChangeLogChangedBy",
+          "values": [
+            "ai",
+            "user"
+          ]
+        },
+        "EventChangeLogOldParticipants": {
+          "name": "EventChangeLogOldParticipants",
+          "values": [
+            "solo",
+            "small",
+            "large"
+          ]
+        },
+        "EventChangeLogNewParticipants": {
+          "name": "EventChangeLogNewParticipants",
+          "values": [
+            "solo",
+            "small",
+            "large"
+          ]
+        },
         "EventClassificationParticipants": {
           "name": "EventClassificationParticipants",
           "values": [
