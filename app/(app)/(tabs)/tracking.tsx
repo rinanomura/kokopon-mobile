@@ -12,9 +12,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { listSessionLogs, SessionLog } from '@/lib/api';
 import { emotionToChipColor, getMissingChipColor } from '@/lib/emotionColor';
+import { getTrainingContent, isValidMenuId } from '@/constants/trainingContents';
+import { usePreferences } from '@/hooks/usePreferences';
 
 /**
- * 活性度を日本語ラベルに変換
+ * 活性度を日本語ラベルに変換（Before用）
  * arousal: -1（不活性）〜 1（活性）
  */
 function getArousalLabel(arousal: number): string {
@@ -25,7 +27,7 @@ function getArousalLabel(arousal: number): string {
 }
 
 /**
- * 快・不快を日本語ラベルに変換
+ * 快・不快を日本語ラベルに変換（Before用）
  * valence: -1（不快）〜 1（快）
  */
 function getValenceLabel(valence: number): string {
@@ -33,6 +35,28 @@ function getValenceLabel(valence: number): string {
   if (valence > 0) return 'やや快';
   if (valence > -0.5) return 'やや不快';
   return '不快';
+}
+
+/**
+ * からだスライダー値をラベルに変換（After用）
+ * afterValence: -1（こわばっている）〜 +1（ゆるんでいる）
+ */
+function getBodyLabel(value: number): string {
+  if (value > 0.5) return 'ゆるんでいる';
+  if (value > 0) return 'ややゆるんでいる';
+  if (value > -0.5) return 'ややこわばっている';
+  return 'こわばっている';
+}
+
+/**
+ * こころスライダー値をラベルに変換（After用）
+ * afterArousal: -1（ざわざわ）〜 +1（しずか）
+ */
+function getMindLabel(value: number): string {
+  if (value > 0.5) return 'しずか';
+  if (value > 0) return 'ややしずか';
+  if (value > -0.5) return 'ややざわざわ';
+  return 'ざわざわ';
 }
 
 /**
@@ -48,49 +72,15 @@ function formatDateTime(isoString: string): string {
 }
 
 /**
- * メニュー名の定義
+ * meditationType からトレーニング名を取得
+ * trainingMode に応じた表示名を返す
  */
-const MENU_NAMES: Record<string, string> = {
-  release_breath: '呼吸の出口を感じる',
-  sense_energy: '今のエネルギーを感じる',
-  ground_body: '体の重さをあずける',
-  calm_stay: '呼吸を感じる',
-};
-
-/**
- * 感情座標からmenuIdを推定（旧データ用）
- */
-function getMenuIdFromEmotion(x: number, y: number): string {
-  // 中央付近は calm_stay
-  const r = Math.sqrt(x * x + y * y);
-  if (r < 0.25) return 'calm_stay';
-
-  const isHighArousal = y < 0; // 画面座標では上がマイナス
-  const isPleasant = x >= 0;
-
-  if (isHighArousal && !isPleasant) return 'release_breath';
-  if (isHighArousal && isPleasant) return 'sense_energy';
-  if (!isHighArousal && !isPleasant) return 'ground_body';
-  return 'calm_stay';
-}
-
-/**
- * meditationType からメニュー名を取得
- * 旧データ（breathing）の場合は感情座標から推定
- */
-function getMenuName(meditationType: string, beforeValence?: number, beforeArousal?: number): string {
-  // 新しいmenuIdの場合
-  if (MENU_NAMES[meditationType]) {
-    return MENU_NAMES[meditationType];
+function getMenuName(meditationType: string, trainingMode: 'intuitive' | 'verbal'): string {
+  if (isValidMenuId(meditationType)) {
+    const content = getTrainingContent(meditationType);
+    return content.title[trainingMode];
   }
-
-  // 旧データ（breathing）の場合は感情座標から推定
-  if (meditationType === 'breathing' && beforeValence !== undefined && beforeArousal !== undefined) {
-    const estimatedMenuId = getMenuIdFromEmotion(beforeValence, beforeArousal);
-    return MENU_NAMES[estimatedMenuId] || '呼吸';
-  }
-
-  return meditationType;
+  return meditationType || '';
 }
 
 /**
@@ -99,6 +89,7 @@ function getMenuName(meditationType: string, beforeValence?: number, beforeArous
  * 過去のセッション履歴を表示
  */
 export default function TrackingScreen() {
+  const { trainingMode } = usePreferences();
   const [sessions, setSessions] = useState<SessionLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -275,7 +266,7 @@ export default function TrackingScreen() {
                           { backgroundColor: emotionToChipColor(session.afterValence, session.afterArousal ?? 0) }
                         ]}>
                           <Text style={styles.chipText}>
-                            {getValenceLabel(session.afterValence)}
+                            からだ: {getBodyLabel(session.afterValence)}
                           </Text>
                         </View>
                         <View style={[
@@ -283,7 +274,7 @@ export default function TrackingScreen() {
                           { backgroundColor: emotionToChipColor(session.afterValence, session.afterArousal ?? 0) }
                         ]}>
                           <Text style={styles.chipText}>
-                            活性{getArousalLabel(session.afterArousal ?? 0)}
+                            こころ: {getMindLabel(session.afterArousal ?? 0)}
                           </Text>
                         </View>
                       </View>
@@ -297,10 +288,14 @@ export default function TrackingScreen() {
                   </View>
                 </View>
 
+                {/* メモ表示 */}
+                {session.memo ? (
+                  <Text style={styles.sessionMemo}>メモ: {session.memo}</Text>
+                ) : null}
+
                 {/* 副情報：トレーニング名・時間 */}
                 <Text style={styles.sessionMeta}>
-                  {getMenuName(session.meditationType, session.beforeValence, session.beforeArousal)}
-                  {session.duration ? ` ${session.duration}秒` : ''}
+                  {getMenuName(session.meditationType ?? '', trainingMode)}
                 </Text>
               </View>
             ))}
@@ -495,6 +490,12 @@ const styles = StyleSheet.create({
     color: '#CBD5E0',
     marginHorizontal: 8,
     marginTop: 24,
+  },
+  sessionMemo: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#5A6B7C',
+    fontStyle: 'italic',
   },
   sessionMeta: {
     marginTop: 12,

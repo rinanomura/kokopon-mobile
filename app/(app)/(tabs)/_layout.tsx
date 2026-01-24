@@ -39,9 +39,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="tracking"
         options={{
-          title: 'トラッキング',
+          title: '履歴',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bar-chart" size={size} color={color} />
+            <Ionicons name="calendar" size={size} color={color} />
           ),
         }}
       />
@@ -50,7 +50,7 @@ export default function TabLayout() {
         options={{
           title: '分析',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar" size={size} color={color} />
+            <Ionicons name="bar-chart" size={size} color={color} />
           ),
         }}
       />

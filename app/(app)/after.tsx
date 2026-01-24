@@ -7,56 +7,55 @@ import {
   TouchableOpacity,
   Dimensions,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { getSessionLog, updateSessionLog, SessionLog } from '@/lib/api';
-import EmotionWheel, { EmotionPoint as WheelEmotionPoint } from '@/components/EmotionWheel';
+import MindfulSlider from '@/components/MindfulSlider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// 円環のサイズ（小さめに表示）
-const WHEEL_SIZE = Math.min(SCREEN_WIDTH * 0.7, 280);
-
-// マーカーのサイズ
-const BEFORE_MARKER_SIZE = 14;
-const AFTER_MARKER_SIZE = 18;
-
 /**
- * EmotionPoint 型
- * 感情円環上の座標を表す
+ * マスコットメッセージ（Phase 2用）
  */
-interface EmotionPoint {
-  x: number;      // -1〜1（valence）
-  y: number;      // -1〜1（arousal）
-}
+const MASCOT_MESSAGES = [
+  'おつかれさま！\n今日も自分と過ごす時間をつくれたね。',
+  'えらいね！\nまた気が向いたら会いに来てね。',
+  'おつかれさま！\nどんな感覚でも、気づけたことがすばらしいよ。',
+  'ありがとう！\n今の自分に気づけたね。',
+  'がんばったね！\nゆっくり休んでね。',
+];
 
 /**
- * AfterScreen - Before / After 可視化画面（⑥）
+ * AfterScreen - トレーニング後記録画面
  *
- * この画面は「変化を評価する」ためのものではありません。
- * Before / After を並べて表示し、ただ眺める体験を提供します。
- *
- * 思想的制約：
- * - 良い・悪いを示さない
- * - 数値比較をしない
- * - 距離・角度・差分を計算しない
- * - 成果・改善・成功という言葉を使わない
+ * Phase 1: スライダー2本 + メモ入力 + 記録ボタン
+ * Phase 2: りなわん吹き出し + ホームへ戻る
  */
 export default function AfterScreen() {
-  // sessionId を params から受け取る
-  const params = useLocalSearchParams<{
-    sessionId: string;
-  }>();
+  const params = useLocalSearchParams<{ sessionId: string }>();
 
-  // SessionLog データ
   const [session, setSession] = useState<SessionLog | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // after で選択した座標
-  const [selectedAfterPoint, setSelectedAfterPoint] = useState<WheelEmotionPoint | null>(null);
   const [saving, setSaving] = useState(false);
+  const [recorded, setRecorded] = useState(false);
+
+  // スライダー値
+  const [bodyValue, setBodyValue] = useState(0);   // からだ: -1(こわばっている) ~ +1(ゆるんでいる)
+  const [mindValue, setMindValue] = useState(0);   // こころ: -1(ざわざわ) ~ +1(しずか)
+
+  // メモ
+  const [memo, setMemo] = useState('');
+
+  // マスコットメッセージ（ランダム選択、一度決めたら変えない）
+  const [mascotMessage] = useState(() =>
+    MASCOT_MESSAGES[Math.floor(Math.random() * MASCOT_MESSAGES.length)]
+  );
 
   /**
    * 画面表示時に SessionLog を取得
@@ -71,8 +70,6 @@ export default function AfterScreen() {
 
       try {
         const result = await getSessionLog(params.sessionId);
-        console.log('=== SessionLog 取得成功 ===');
-        console.log(result);
         setSession(result);
       } catch (error) {
         console.error('SessionLog 取得エラー:', error);
@@ -85,58 +82,26 @@ export default function AfterScreen() {
   }, [params.sessionId]);
 
   /**
-   * 感情ホイールがタップされたときのハンドラ
+   * 記録ボタン押下
    */
-  const handleEmotionSelect = useCallback(async (point: WheelEmotionPoint) => {
-    console.log('=== afterPoint が選択されました ===');
-    console.log(`座標: (x: ${point.x}, y: ${point.y})`);
+  const handleRecord = useCallback(async () => {
+    if (!session?.id) return;
 
-    setSelectedAfterPoint(point);
-
-    // SessionLog を更新
-    if (session?.id) {
-      setSaving(true);
-      try {
-        const result = await updateSessionLog(session.id, point.x, point.y);
-        console.log('=== SessionLog 更新成功（after追加）===');
-        console.log(result);
-        setSession(result);
-      } catch (error) {
-        console.error('SessionLog 更新エラー:', error);
-      } finally {
-        setSaving(false);
-      }
+    setSaving(true);
+    try {
+      await updateSessionLog(
+        session.id,
+        bodyValue,    // afterValence: からだ
+        mindValue,    // afterArousal: こころ
+        memo || undefined,
+      );
+      setRecorded(true);
+    } catch (error) {
+      console.error('SessionLog 更新エラー:', error);
+    } finally {
+      setSaving(false);
     }
-  }, [session?.id]);
-
-  // beforePoint を SessionLog から構築
-  const beforePoint: EmotionPoint = session
-    ? { x: session.beforeValence, y: session.beforeArousal }
-    : { x: 0, y: 0 };
-
-  // afterPoint（選択済み or SessionLog から）
-  const afterPoint: EmotionPoint | null =
-    selectedAfterPoint
-      ? { x: selectedAfterPoint.x, y: selectedAfterPoint.y }
-      : (session?.afterValence !== undefined && session?.afterValence !== null)
-        ? { x: session.afterValence, y: session.afterArousal ?? 0 }
-        : null;
-
-  // after が選択済みかどうか
-  const hasAfter = afterPoint !== null;
-
-  /**
-   * 正規化座標（-1〜1）をピクセル座標に変換
-   */
-  const getMarkerPosition = (point: EmotionPoint, markerSize: number) => {
-    const radius = WHEEL_SIZE / 2;
-    const left = radius + point.x * radius - markerSize / 2;
-    const top = radius + point.y * radius - markerSize / 2;
-    return { left, top };
-  };
-
-  const beforePosition = getMarkerPosition(beforePoint, BEFORE_MARKER_SIZE);
-  const afterPosition = afterPoint ? getMarkerPosition(afterPoint, AFTER_MARKER_SIZE) : null;
+  }, [session?.id, bodyValue, mindValue, memo]);
 
   /**
    * ホームへ戻る
@@ -158,88 +123,13 @@ export default function AfterScreen() {
     );
   }
 
-  return (
-    <LinearGradient
-      colors={['#7AD7F0', '#CDECF6']}
-      style={styles.gradient}
-    >
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* タイトル */}
-        <View style={styles.header}>
-          <Text style={styles.title}>
-            いまの状態を、少し眺めてみよう
-          </Text>
-        </View>
-
-        {/* メインコンテンツ：感情円環 with Before/After マーカー */}
-        <View style={styles.mainContent}>
-          {/* 円環セクション（上部） */}
-          <View style={styles.wheelSection}>
-            {/* ガイド文（afterがまだの場合） */}
-            {!hasAfter && (
-              <Text style={styles.guideText}>
-                いまの気持ちを{'\n'}タップして選んでね
-              </Text>
-            )}
-
-            {/* 感情ホイール（タップで after を選択） */}
-            <View style={[styles.wheelContainer, { width: WHEEL_SIZE, height: WHEEL_SIZE }]}>
-              <EmotionWheel
-                size={WHEEL_SIZE}
-                labelMode={0}
-                onSelect={handleEmotionSelect}
-                selectedPoint={selectedAfterPoint}
-              />
-
-              {/* Before マーカー（薄いグレー、小さめ） */}
-              <View
-                style={[
-                  styles.beforeMarker,
-                  {
-                    left: beforePosition.left,
-                    top: beforePosition.top,
-                    width: BEFORE_MARKER_SIZE,
-                    height: BEFORE_MARKER_SIZE,
-                    borderRadius: BEFORE_MARKER_SIZE / 2,
-                  },
-                ]}
-                pointerEvents="none"
-              />
-
-              {/* After マーカー（afterが選択済みの場合のみ表示） */}
-              {afterPosition && (
-                <View
-                  style={[
-                    styles.afterMarker,
-                    {
-                      left: afterPosition.left,
-                      top: afterPosition.top,
-                      width: AFTER_MARKER_SIZE,
-                      height: AFTER_MARKER_SIZE,
-                      borderRadius: AFTER_MARKER_SIZE / 2,
-                    },
-                  ]}
-                  pointerEvents="none"
-                />
-              )}
-            </View>
-
-            {/* 凡例（シンプルに） */}
-            <View style={styles.legend}>
-              <View style={styles.legendItem}>
-                <View style={styles.legendBeforeDot} />
-                <Text style={styles.legendText}>はじめ</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={styles.legendAfterDot} />
-                <Text style={styles.legendText}>いま</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* 吹き出し + りなわん */}
-          <View style={styles.mascotSection}>
-            {/* 吹き出し（ファンシーデザイン） */}
+  // Phase 2: 記録完了後
+  if (recorded) {
+    return (
+      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <View style={styles.phase2Content}>
+            {/* 吹き出し */}
             <View style={styles.speechBubbleContainer}>
               <LinearGradient
                 colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
@@ -247,54 +137,122 @@ export default function AfterScreen() {
                 end={{ x: 1, y: 1 }}
                 style={styles.speechBubble}
               >
-                {/* 装飾キラキラ（左上） */}
                 <View style={styles.sparkleTopLeft}>
                   <Text style={styles.sparkleText}>✧</Text>
                 </View>
-                {/* 装飾キラキラ（右下） */}
                 <View style={styles.sparkleBottomRight}>
                   <Text style={styles.sparkleText}>✧</Text>
                 </View>
                 <Text style={styles.speechBubbleText}>
-                  変わっていても、{'\n'}変わっていなくても、大丈夫。
+                  {mascotMessage}
                 </Text>
               </LinearGradient>
-              {/* 吹き出しの尻尾（下向き・グラデーション風） */}
               <View style={styles.speechBubbleTailOuter}>
                 <View style={styles.speechBubbleTail} />
               </View>
             </View>
 
-            {/* りなわん */}
-            <View style={styles.mascotContainer}>
-              <Image
-                source={require('@/assets/images/rinawan_laying_down.gif')}
-                style={styles.mascotImage}
-                resizeMode="contain"
+            {/* りなわん GIF */}
+            <Image
+              source={require('@/assets/images/rinawan_laying_down.gif')}
+              style={styles.mascotImage}
+              resizeMode="contain"
+            />
+          </View>
+
+          {/* ホームへ戻るボタン */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              onPress={handleGoHome}
+              activeOpacity={0.8}
+              style={styles.buttonWrapper}
+            >
+              <LinearGradient
+                colors={['#FF85A2', '#FFB6C1']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.button}
+              >
+                <Text style={styles.buttonText}>ホームへもどる</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
+  // Phase 1: 記録画面
+  return (
+    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoid}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          {/* タイトル */}
+          <Text style={styles.title}>トレーニングお疲れ様でした！</Text>
+
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* スライダーセクション */}
+            <View style={styles.slidersContainer}>
+              <MindfulSlider
+                label="からだ"
+                leftLabel="こわばっている"
+                rightLabel="ゆるんでいる"
+                value={bodyValue}
+                onValueChange={setBodyValue}
+              />
+              <MindfulSlider
+                label="こころ"
+                leftLabel="ざわざわ"
+                rightLabel="しずか"
+                value={mindValue}
+                onValueChange={setMindValue}
               />
             </View>
-          </View>
-        </View>
 
-        {/* フッター：ホームへ戻るボタン */}
-        <View style={styles.footer}>
-          <TouchableOpacity
-            onPress={handleGoHome}
-            activeOpacity={0.8}
-            style={styles.homeButtonWrapper}
-          >
-            <LinearGradient
-              colors={['#FF85A2', '#FFB6C1']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.homeButton}
+            {/* メモ入力 */}
+            <View style={styles.memoContainer}>
+              <TextInput
+                style={styles.memoInput}
+                placeholder="トレーニング中の気づきがあれば..."
+                placeholderTextColor="#A0AEC0"
+                value={memo}
+                onChangeText={setMemo}
+                multiline
+                maxLength={200}
+              />
+            </View>
+          </ScrollView>
+
+          {/* 記録ボタン */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              onPress={handleRecord}
+              activeOpacity={0.8}
+              disabled={saving}
+              style={styles.buttonWrapper}
             >
-              <Text style={styles.homeButtonText}>
-                今日の記録へ
-              </Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
+              <LinearGradient
+                colors={['#FF85A2', '#FFB6C1']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.button}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>この内容で記録する</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -312,70 +270,104 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  // ヘッダー
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    alignItems: 'center',
+  keyboardAvoid: {
+    flex: 1,
   },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 0,
+    paddingBottom: 80,
+  },
+
+  // タイトル
   title: {
     fontSize: 20,
     fontWeight: '600',
     color: '#4A5568',
     textAlign: 'center',
-    lineHeight: 30,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
 
-  // メインコンテンツ
-  mainContent: {
+  // スライダー
+  slidersContainer: {
+    marginBottom: 24,
+  },
+
+  // メモ
+  memoContainer: {
+    marginBottom: 16,
+  },
+  memoInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: 16,
+    padding: 16,
+    fontSize: 14,
+    color: '#4A5568',
+    minHeight: 80,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 182, 193, 0.3)',
+  },
+
+  // フッター
+  footer: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  buttonWrapper: {
+    borderRadius: 25,
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  button: {
+    borderRadius: 25,
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+
+  // Phase 2: 確認画面
+  phase2Content: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingTop: 16,
-  },
-  wheelSection: {
-    alignItems: 'center',
-  },
-  guideText: {
-    fontSize: 14,
-    color: '#5A6B7C',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 12,
-    fontWeight: '500',
-  },
-  wheelContainer: {
-    position: 'relative',
-  },
-  wheelImage: {
-    position: 'absolute',
   },
 
-  // 吹き出し + りなわんセクション
-  mascotSection: {
-    alignItems: 'center',
-    marginTop: 40,
-  },
+  // 吹き出し
   speechBubbleContainer: {
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 16,
   },
   speechBubble: {
     borderRadius: 24,
-    paddingVertical: 18,
-    paddingHorizontal: 24,
+    paddingVertical: 20,
+    paddingHorizontal: 28,
     borderWidth: 2,
     borderColor: 'rgba(255, 182, 193, 0.5)',
-    // ピンク系のやさしい影
     shadowColor: '#FFB6C1',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 5,
     position: 'relative',
-    overflow: 'visible',
   },
   sparkleTopLeft: {
     position: 'absolute',
@@ -415,98 +407,10 @@ const styles = StyleSheet.create({
   },
 
   // りなわん
-  mascotContainer: {
-    alignItems: 'center',
-  },
   mascotImage: {
-    width: SCREEN_WIDTH * 0.35,
-    height: SCREEN_WIDTH * 0.35,
-    maxWidth: 140,
-    maxHeight: 140,
-  },
-
-  // Before マーカー（薄いグレー）
-  beforeMarker: {
-    position: 'absolute',
-    backgroundColor: 'rgba(160, 174, 192, 0.9)',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    // やさしい影
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-
-  // After マーカー（少し濃い色）
-  afterMarker: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255, 133, 162, 0.95)',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    // やさしい影
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-
-  // 凡例
-  legend: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 24,
-    gap: 24,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  legendBeforeDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: 'rgba(160, 174, 192, 0.9)',
-  },
-  legendAfterDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255, 133, 162, 0.95)',
-  },
-  legendText: {
-    fontSize: 14,
-    color: '#718096',
-    fontWeight: '500',
-  },
-
-  // フッター
-  footer: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
-    alignItems: 'center',
-  },
-  homeButtonWrapper: {
-    borderRadius: 25,
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  homeButton: {
-    borderRadius: 25,
-    paddingVertical: 14,
-    paddingHorizontal: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  homeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    width: SCREEN_WIDTH * 0.4,
+    height: SCREEN_WIDTH * 0.4,
+    maxWidth: 160,
+    maxHeight: 160,
   },
 });

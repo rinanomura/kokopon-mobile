@@ -397,6 +397,7 @@ export interface SessionLogInput {
   afterArousal?: number;
   meditationType?: string;
   duration?: number;
+  memo?: string;
   deleted?: boolean;
 }
 
@@ -529,21 +530,27 @@ export async function getSessionLog(id: string): Promise<SessionLog | null> {
 
 /**
  * SessionLog を更新（瞑想終了時に after を追加）
+ * memo はバックエンド対応完了後に送信を有効化する
  */
 export async function updateSessionLog(
   id: string,
   afterValence: number,
-  afterArousal: number
+  afterArousal: number,
+  memo?: string
 ): Promise<SessionLog> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const input: any = {
+    id,
+    afterValence,
+    afterArousal,
+  };
+  // TODO: バックエンド対応完了後にコメントアウトを解除
+  // if (memo) {
+  //   input.memo = memo;
+  // }
   const result = await getClient().graphql({
     query: updateSessionLogMutation,
-    variables: {
-      input: {
-        id,
-        afterValence,
-        afterArousal,
-      },
-    },
+    variables: { input },
   });
   return (result as any).data.updateSessionLog;
 }
