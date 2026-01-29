@@ -7,12 +7,21 @@ export type VoiceType = 'rina' | 'rinawan';
 export type GuideMode = 'timer' | 'ambient' | 'guided';
 export type AmbientSound = 'birds' | 'river' | 'rain' | 'wave' | 'bonfire' | 'space';
 
+// 通知時刻の型（lib/notifications.tsと同じ）
+export type NotificationTime = {
+  id: string;
+  hour: number;
+  minute: number;
+  enabled: boolean;
+};
+
 // ストレージキー
 export const STORAGE_KEYS = {
   TRAINING_MODE: 'pref_training_mode',
   VOICE: 'pref_voice',
   GUIDE_MODE: 'pref_guide_mode',
   AMBIENT_SOUND: 'pref_ambient_sound',
+  NOTIFICATION_TIMES: 'pref_notification_times',
 } as const;
 
 // デフォルト値
@@ -20,6 +29,7 @@ export const DEFAULT_TRAINING_MODE: TrainingMode = 'intuitive';
 export const DEFAULT_VOICE: VoiceType = 'rina';
 export const DEFAULT_GUIDE_MODE: GuideMode = 'timer';
 export const DEFAULT_AMBIENT_SOUND: AmbientSound = 'birds';
+export const DEFAULT_NOTIFICATION_TIMES: NotificationTime[] = [];
 
 /**
  * 設定を参照・更新するフック
