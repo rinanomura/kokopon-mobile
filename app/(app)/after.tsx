@@ -123,6 +123,38 @@ export default function AfterScreen() {
     );
   }
 
+  // セッションが見つからない場合（リフレッシュ時など）
+  if (!session) {
+    return (
+      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>
+              セッション情報が見つかりません
+            </Text>
+            <Text style={styles.errorHint}>
+              ページをリフレッシュした場合、{'\n'}記録が失われることがあります
+            </Text>
+            <TouchableOpacity
+              onPress={handleGoHome}
+              activeOpacity={0.8}
+              style={styles.homeButtonWrapper}
+            >
+              <LinearGradient
+                colors={['#FF85A2', '#FFB6C1']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.homeButton}
+              >
+                <Text style={styles.homeButtonText}>ホームへ戻る</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
   // Phase 2: 記録完了後
   if (recorded) {
     return (
@@ -191,7 +223,18 @@ export default function AfterScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           {/* タイトル */}
-          <Text style={styles.title}>トレーニングお疲れ様でした！</Text>
+          <View style={styles.titleWrapper}>
+            <LinearGradient
+              colors={['rgba(255,240,245,0.95)', 'rgba(255,255,255,0.95)', 'rgba(255,240,245,0.95)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.titleContainer}
+            >
+              <Text style={styles.titleDecorLeft}>✧ ⋆</Text>
+              <Text style={styles.title}>トレーニング後の状態を教えてね！</Text>
+              <Text style={styles.titleDecorRight}>⋆ ✧</Text>
+            </LinearGradient>
+          </View>
 
           <ScrollView
             style={styles.scrollView}
@@ -220,7 +263,7 @@ export default function AfterScreen() {
             <View style={styles.memoContainer}>
               <TextInput
                 style={styles.memoInput}
-                placeholder="トレーニング中の気づきがあれば..."
+                placeholder="トレーニング中の気づきや、今の感覚など自由に…（任意）"
                 placeholderTextColor="#A0AEC0"
                 value={memo}
                 onChangeText={setMemo}
@@ -270,6 +313,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  errorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  errorText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+    marginBottom: 8,
+  },
+  errorHint: {
+    fontSize: 14,
+    color: '#718096',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  homeButtonWrapper: {
+    borderRadius: 25,
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  homeButton: {
+    borderRadius: 25,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
   keyboardAvoid: {
     flex: 1,
   },
@@ -285,13 +367,43 @@ const styles = StyleSheet.create({
   },
 
   // タイトル
+  titleWrapper: {
+    alignItems: 'center',
+    paddingTop: 24,
+    paddingBottom: 8,
+    paddingHorizontal: 16,
+  },
+  titleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 182, 193, 0.5)',
+    shadowColor: '#FFB6C1',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
   title: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '600',
     color: '#4A5568',
     textAlign: 'center',
-    paddingTop: 24,
-    paddingBottom: 8,
+    marginHorizontal: 4,
+  },
+  titleDecorLeft: {
+    fontSize: 14,
+    color: '#FF85A2',
+    marginRight: 4,
+  },
+  titleDecorRight: {
+    fontSize: 14,
+    color: '#FF85A2',
+    marginLeft: 4,
   },
 
   // スライダー

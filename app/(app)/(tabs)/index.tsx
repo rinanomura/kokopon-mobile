@@ -8,42 +8,36 @@ import {
   Image,
   Animated,
   Easing,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import EmotionWheel, { EmotionPoint, LabelMode } from '@/components/EmotionWheel';
-import { listSessionLogs } from '@/lib/api';
 import { useFootprints } from '@/hooks/useFootprints';
+import { usePreferences } from '@/hooks/usePreferences';
+import MindfulSlider from '@/components/MindfulSlider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// 円環のサイズ（画面幅の85%、上限340px）
-const WHEEL_SIZE = Math.min(SCREEN_WIDTH * 0.85, 340);
-
 /**
- * HomeScreen - 感情センシング画面（③）
+ * HomeScreen - トレーニング開始画面
  *
- * マインドフルネスのためのメイン画面です。
- * ユーザーは円環をタップして「今の感情」を選択し、
- * 次の画面（④おすすめ画面）へ進みます。
- *
- * 重要: この画面では感情を「評価」しません。
- * 良い／悪い、正しい／間違い、といった判断は一切行いません。
- * ユーザーは自分の状態にただ「気づく」だけです。
+ * ユーザーは「からだ」「こころ」の状態をスライダーで入力し、
+ * トレーニングへ進みます。
  */
 export default function HomeScreen() {
-  const { totalCount, startedAtISO, addFootprint } = useFootprints();
+  const { addFootprint } = useFootprints();
+  const { guideMode } = usePreferences();
 
-  // ラベル表示モード（0: ベースのみ, 1: +基本ラベル, 2: +詳細ラベル）
-  // 初期値は0（ベースのみ）
-  const [labelMode, setLabelMode] = useState<LabelMode>(0);
+  // スライダー値
+  const [bodyValue, setBodyValue] = useState(0);   // からだ: -1(こわばっている) ~ +1(ゆるんでいる)
+  const [mindValue, setMindValue] = useState(0);   // こころ: -1(ざわざわ) ~ +1(しずか)
 
-  // 選択された感情の座標（before = アクティビティ前の状態）
-  const [beforePoint, setBeforePoint] = useState<EmotionPoint | null>(null);
-
-  // 今月のセッション回数
-  const [monthlySessionCount, setMonthlySessionCount] = useState<number | null>(null);
+  // メモ
+  const [memo, setMemo] = useState('');
 
   // 吹き出しアニメーション
   const bubbleAnim = useRef(new Animated.Value(0)).current;
@@ -72,99 +66,60 @@ export default function HomeScreen() {
 
     // キラキラアニメーション（それぞれ異なるタイミング）
     const startSparkleAnim = (anim: Animated.Value, delay: number) => {
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(anim, {
-            toValue: 1,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-          Animated.timing(anim, {
-            toValue: 0.3,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
+      setTimeout(() => {
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(anim, {
+              toValue: 1,
+              duration: 1500,
+              easing: Easing.inOut(Easing.ease),
+              useNativeDriver: true,
+            }),
+            Animated.timing(anim, {
+              toValue: 0.2,
+              duration: 1500,
+              easing: Easing.inOut(Easing.ease),
+              useNativeDriver: true,
+            }),
+          ])
+        ).start();
+      }, delay);
     };
 
     startSparkleAnim(sparkle1Anim, 0);
-    startSparkleAnim(sparkle2Anim, 400);
+    startSparkleAnim(sparkle2Anim, 500);
     startSparkleAnim(sparkle3Anim, 800);
   }, []);
 
   /**
-   * 今月のセッション回数を取得
-   */
-  useEffect(() => {
-    const fetchMonthlyCount = async () => {
-      try {
-        const sessions = await listSessionLogs();
-
-        // 今月の開始日を取得
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-        // 今月のセッションをフィルター
-        const monthlySessions = sessions.filter(session => {
-          const sessionDate = new Date(session.timestamp);
-          return sessionDate >= startOfMonth;
-        });
-
-        setMonthlySessionCount(monthlySessions.length);
-      } catch (error) {
-        console.error('セッション回数取得エラー:', error);
-        setMonthlySessionCount(0);
-      }
-    };
-
-    fetchMonthlyCount();
-  }, []);
-
-  /**
-   * 円環がタップされたときのハンドラ
-   * 座標をコンソールに出力し、beforePoint を更新
-   */
-  const handleEmotionSelect = useCallback((point: EmotionPoint) => {
-    // 動作確認用：選択された座標をコンソールに出力
-    console.log('=== beforePoint が選択されました ===');
-    console.log(`座標: (x: ${point.x}, y: ${point.y})`);
-    console.log(`極座標: (r: ${point.r}, theta: ${point.theta})`);
-    console.log('=====================================');
-
-    setBeforePoint(point);
-  }, []);
-
-  /**
-   * ラベル表示モードを切り替え（0 → 1 → 2 → 0）
-   */
-  const cycleLabelMode = useCallback(() => {
-    setLabelMode(prev => ((prev + 1) % 3) as LabelMode);
-  }, []);
-
-  /**
    * 「トレーニングへ進む」ボタンのハンドラ
-   * beforePoint をログに出力し、次の画面へ遷移
    */
-  const handleRecord = useCallback(async () => {
-    if (!beforePoint) {
-      return;
-    }
-
+  const handleProceed = useCallback(async () => {
     await addFootprint();
 
-    // ④ おすすめ画面へ遷移
-    router.push({
-      pathname: '/recommendation',
-      params: {
-        beforeX: beforePoint.x.toString(),
-        beforeY: beforePoint.y.toString(),
-        beforeR: beforePoint.r.toString(),
-        beforeTheta: beforePoint.theta.toString(),
-      },
-    });
-  }, [beforePoint, addFootprint]);
+    // ガイドモードに応じて遷移先を分岐
+    if (guideMode === 'guided') {
+      // ③瞑想ガイド: 感情円環画面へ
+      router.push({
+        pathname: '/emotion-select',
+        params: {
+          beforeBody: bodyValue.toString(),
+          beforeMind: mindValue.toString(),
+          memo: memo,
+        },
+      });
+    } else {
+      // ①タイマー / ②環境音: 時間選択画面へ
+      router.push({
+        pathname: '/time-select',
+        params: {
+          beforeBody: bodyValue.toString(),
+          beforeMind: mindValue.toString(),
+          memo: memo,
+        },
+      });
+    }
+  }, [bodyValue, mindValue, memo, guideMode, addFootprint]);
 
   return (
     <LinearGradient
@@ -172,120 +127,126 @@ export default function HomeScreen() {
       style={styles.gradient}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        {/* メインコンテンツ：感情円環 */}
-        <View style={styles.wheelContainer}>
-          {/* バッジ表示（中央配置） */}
-          <View style={styles.badgeRow}>
-            {monthlySessionCount !== null && (
-              <View style={styles.sessionBadge}>
-                <Text style={styles.sessionBadgeIcon}>🐾</Text>
-                <Text style={styles.sessionBadgeText}>
-                  今月 {monthlySessionCount + 1} 回目
-                </Text>
-              </View>
-            )}
-            {startedAtISO && (
-              <View style={styles.sessionBadge}>
-                <Text style={styles.sessionBadgeIcon}>🌱</Text>
-                <Text style={styles.sessionBadgeText}>
-                  {new Date(startedAtISO).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' })}から参加中
-                </Text>
-              </View>
-            )}
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoid}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          {/* タイトル */}
+          <View style={styles.titleWrapper}>
+            <LinearGradient
+              colors={['rgba(255,240,245,0.95)', 'rgba(255,255,255,0.95)', 'rgba(255,240,245,0.95)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.titleContainer}
+            >
+              <Text style={styles.titleDecorLeft}>✧ ⋆</Text>
+              <Text style={styles.title}>今の状態を教えてね！</Text>
+              <Text style={styles.titleDecorRight}>⋆ ✧</Text>
+            </LinearGradient>
           </View>
 
-          {/* ガイド文 */}
-          <View style={styles.guideContainer}>
-            {/* りなわん */}
-            <View style={styles.mascotWrapper}>
-              <Image
-                source={require('@/assets/images/rinawan_tilting_head.gif')}
-                style={styles.mascotImage}
-                resizeMode="contain"
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* スライダーセクション */}
+            <View style={styles.slidersContainer}>
+              <MindfulSlider
+                label="からだ"
+                leftLabel="こわばっている"
+                rightLabel="ゆるんでいる"
+                value={bodyValue}
+                onValueChange={setBodyValue}
+              />
+              <MindfulSlider
+                label="こころ"
+                leftLabel="ざわざわ"
+                rightLabel="しずか"
+                value={mindValue}
+                onValueChange={setMindValue}
               />
             </View>
-            <Animated.View
-              style={[
-                styles.speechBubbleContainer,
-                {
-                  transform: [{
-                    translateY: bubbleAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, -4],
-                    }),
-                  }],
-                },
-              ]}
+
+            {/* メモ入力 */}
+            <View style={styles.memoContainer}>
+              <TextInput
+                style={styles.memoInput}
+                placeholder="今の気持ちや状況など自由に…（任意）"
+                placeholderTextColor="#A0AEC0"
+                value={memo}
+                onChangeText={setMemo}
+                multiline
+                maxLength={200}
+              />
+            </View>
+
+            {/* りなわんと吹き出し */}
+            <View style={styles.mascotSection}>
+              <View style={styles.mascotWrapper}>
+                <Image
+                  source={require('@/assets/images/rinawan_tilting_head.gif')}
+                  style={styles.mascotImage}
+                  resizeMode="contain"
+                />
+              </View>
+              <Animated.View
+                style={[
+                  styles.speechBubbleContainer,
+                  {
+                    transform: [{
+                      translateY: bubbleAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -4],
+                      }),
+                    }],
+                  },
+                ]}
+              >
+                <View style={styles.speechBubbleTail} />
+                <LinearGradient
+                  colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.speechBubble}
+                >
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim }]}>
+                    ✧
+                  </Animated.Text>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim }]}>
+                    ✦
+                  </Animated.Text>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim }]}>
+                    ⋆
+                  </Animated.Text>
+                  <Text style={styles.speechBubbleText}>
+                    準備ができたら{'\n'}始めよう！
+                  </Text>
+                </LinearGradient>
+              </Animated.View>
+            </View>
+          </ScrollView>
+
+          {/* フッター：トレーニングへ進むボタン */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              onPress={handleProceed}
+              activeOpacity={0.8}
+              style={styles.proceedButtonWrapper}
             >
-              {/* 吹き出しの尻尾（左向き三角） */}
-              <View style={styles.speechBubbleTail} />
               <LinearGradient
-                colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
+                colors={['#FF85A2', '#FFB6C1']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={styles.speechBubble}
+                style={styles.proceedButton}
               >
-                {/* 装飾キラキラ（複数配置） */}
-                <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim }]}>
-                  ✧
-                </Animated.Text>
-                <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim }]}>
-                  ✦
-                </Animated.Text>
-                <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim }]}>
-                  ⋆
-                </Animated.Text>
-                <Text style={styles.speechBubbleText}>
-                  円の中をタップして、{'\n'}今の気持ちを選んでね
+                <Text style={styles.proceedButtonText}>
+                  トレーニングへ進む
                 </Text>
               </LinearGradient>
-            </Animated.View>
-          </View>
-
-          {/* 感情円環 */}
-          <View style={styles.wheelWrapper}>
-            <EmotionWheel
-              size={WHEEL_SIZE}
-              labelMode={labelMode}
-              onSelect={handleEmotionSelect}
-              selectedPoint={beforePoint}
-            />
-            {/* ラベル切り替えボタン（円環の右下） */}
-            <TouchableOpacity
-              style={[
-                styles.helpButton,
-                labelMode > 0 && styles.helpButtonActive,
-              ]}
-              onPress={cycleLabelMode}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.helpButtonText}>
-                {labelMode === 0 ? '?' : labelMode === 1 ? '?' : '!'}
-              </Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* フッター部分：トレーニングへ進むボタン */}
-        <View style={styles.footer}>
-          <TouchableOpacity
-            onPress={handleRecord}
-            activeOpacity={0.8}
-            disabled={!beforePoint}
-            style={styles.recordButtonWrapper}
-          >
-            <LinearGradient
-              colors={beforePoint ? ['#FF85A2', '#FFB6C1'] : ['#A0AEC0', '#B8C5D0']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.recordButton}
-            >
-              <Text style={styles.recordButtonText}>
-                トレーニングへ進む
-              </Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -298,85 +259,95 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  wheelWrapper: {
-    position: 'relative',
-  },
-  helpButton: {
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  helpButtonActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderWidth: 1.5,
-    borderColor: '#7AD7F0',
-  },
-  helpButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#5A6B7C',
-  },
-  wheelContainer: {
+  keyboardAvoid: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 20,
   },
-  guideContainer: {
+  titleWrapper: {
+    alignItems: 'center',
+    paddingTop: 16,
+    paddingBottom: 8,
+    paddingHorizontal: 16,
+  },
+  titleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 182, 193, 0.5)',
+    shadowColor: '#FFB6C1',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#4A5568',
+    textAlign: 'center',
+    marginHorizontal: 4,
+  },
+  titleDecorLeft: {
+    fontSize: 14,
+    color: '#FF85A2',
+    marginRight: 4,
+  },
+  titleDecorRight: {
+    fontSize: 14,
+    color: '#FF85A2',
+    marginLeft: 4,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+
+  // スライダー
+  slidersContainer: {
     marginBottom: 16,
+  },
+
+  // メモ
+  memoContainer: {
+    marginBottom: 16,
+  },
+  memoInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: 16,
+    padding: 16,
+    fontSize: 14,
+    color: '#4A5568',
+    minHeight: 60,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 182, 193, 0.3)',
+  },
+
+  // りなわん + 吹き出し
+  mascotSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
   },
   mascotWrapper: {
     alignItems: 'center',
   },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    gap: 6,
-    position: 'absolute',
-    top: 50,
-  },
-  sessionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#7AD7F0',
-  },
-  sessionBadgeIcon: {
-    fontSize: 10,
-    marginRight: 3,
-  },
-  sessionBadgeText: {
-    fontSize: 10,
-    color: '#5A6B7C',
-    fontWeight: '500',
-    letterSpacing: 0.2,
-  },
   mascotImage: {
-    width: 110,
-    height: 110,
+    width: 90,
+    height: 90,
   },
   speechBubbleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginLeft: -8,
   },
   speechBubbleTail: {
     width: 0,
@@ -390,74 +361,70 @@ const styles = StyleSheet.create({
     marginRight: -1,
   },
   speechBubble: {
-    borderRadius: 20,
+    borderRadius: 16,
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderWidth: 2,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
     borderColor: 'rgba(255, 182, 193, 0.5)',
-    // ピンク系のやさしい影
     shadowColor: '#FFB6C1',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
     position: 'relative',
   },
   sparkle: {
     position: 'absolute',
-    fontSize: 18,
+    fontSize: 12,
     color: '#FF69B4',
     textShadowColor: '#FF69B4',
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
+    textShadowRadius: 4,
   },
   sparkleTopRight: {
-    top: -12,
-    right: -10,
-    fontSize: 22,
+    top: -6,
+    right: -4,
   },
   sparkleTopLeft: {
     top: 2,
-    left: -14,
-    fontSize: 18,
-    color: '#FF85A2',
+    left: -8,
   },
   sparkleBottomRight: {
-    bottom: -8,
-    right: -4,
-    fontSize: 16,
-    color: '#FFB6C1',
+    bottom: -4,
+    right: 0,
   },
   speechBubbleText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#5A6B7C',
     fontWeight: '600',
-    lineHeight: 21,
-    letterSpacing: 0.2,
+    lineHeight: 20,
+    textAlign: 'center',
   },
+
+  // フッター
   footer: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 8,
     alignItems: 'center',
   },
-  recordButtonWrapper: {
+  proceedButtonWrapper: {
     borderRadius: 25,
-    // やさしい影
     shadowColor: '#FF85A2',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 4,
   },
-  recordButton: {
+  proceedButton: {
     borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 32,
+    paddingVertical: 14,
+    paddingHorizontal: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recordButtonText: {
-    fontSize: 15,
+  proceedButtonText: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
   },

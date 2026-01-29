@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { signOut } from 'aws-amplify/auth';
 import { router } from 'expo-router';
-import { usePreferences, TrainingMode, VoiceType } from '@/hooks/usePreferences';
+import { usePreferences, TrainingMode, VoiceType, GuideMode, AmbientSound } from '@/hooks/usePreferences';
 import { resetClient } from '@/lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -30,8 +30,17 @@ import {
  * ユーザー設定・ログアウト・カレンダー連携管理
  */
 export default function SettingsScreen() {
-  // トレーニングモード・音声設定
-  const { trainingMode, setTrainingMode, voice, setVoice } = usePreferences();
+  // トレーニングモード・音声設定・ガイドモード
+  const {
+    trainingMode,
+    setTrainingMode,
+    voice,
+    setVoice,
+    guideMode,
+    setGuideMode,
+    ambientSound,
+    setAmbientSound,
+  } = usePreferences();
 
   // Googleカレンダー連携
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
@@ -48,6 +57,14 @@ export default function SettingsScreen() {
 
   const handleVoiceChange = (newVoice: VoiceType) => {
     setVoice(newVoice);
+  };
+
+  const handleGuideModeChange = (newMode: GuideMode) => {
+    setGuideMode(newMode);
+  };
+
+  const handleAmbientSoundChange = (newSound: AmbientSound) => {
+    setAmbientSound(newSound);
   };
 
   /**
@@ -295,6 +312,193 @@ export default function SettingsScreen() {
             <Text style={styles.sectionHint}>瞑想画面で使用する音声ガイドの声を選択</Text>
           </View>
 
+          {/* ガイドモード設定 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>瞑想ガイド</Text>
+            <View style={styles.guideSelector}>
+              <TouchableOpacity
+                style={[
+                  styles.guideOption,
+                  guideMode === 'timer' && styles.guideOptionSelected,
+                ]}
+                onPress={() => handleGuideModeChange('timer')}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="timer-outline"
+                  size={24}
+                  color={guideMode === 'timer' ? '#FF85A2' : '#718096'}
+                />
+                <Text style={[
+                  styles.guideOptionTitle,
+                  guideMode === 'timer' && styles.guideOptionTitleSelected,
+                ]}>
+                  タイマーのみ
+                </Text>
+                <Text style={styles.guideOptionDesc}>
+                  シンプルなタイマーで{'\n'}自分のペースで
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.guideOption,
+                  guideMode === 'ambient' && styles.guideOptionSelected,
+                ]}
+                onPress={() => handleGuideModeChange('ambient')}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="leaf-outline"
+                  size={24}
+                  color={guideMode === 'ambient' ? '#FF85A2' : '#718096'}
+                />
+                <Text style={[
+                  styles.guideOptionTitle,
+                  guideMode === 'ambient' && styles.guideOptionTitleSelected,
+                ]}>
+                  環境音
+                </Text>
+                <Text style={styles.guideOptionDesc}>
+                  心地よい環境音{'\n'}とともに
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.guideOption,
+                  guideMode === 'guided' && styles.guideOptionSelected,
+                ]}
+                onPress={() => handleGuideModeChange('guided')}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="headset-outline"
+                  size={24}
+                  color={guideMode === 'guided' ? '#FF85A2' : '#718096'}
+                />
+                <Text style={[
+                  styles.guideOptionTitle,
+                  guideMode === 'guided' && styles.guideOptionTitleSelected,
+                ]}>
+                  瞑想ガイド
+                </Text>
+                <Text style={styles.guideOptionDesc}>
+                  音声ガイドに{'\n'}沿って
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* 環境音選択（環境音モード時のみ表示） */}
+          {guideMode === 'ambient' && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>環境音の種類</Text>
+              <View style={styles.ambientGrid}>
+                <View style={styles.ambientRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'birds' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('birds')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🐦</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'birds' && styles.modeButtonTextSelected,
+                    ]}>
+                      小鳥
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'river' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('river')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🏞️</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'river' && styles.modeButtonTextSelected,
+                    ]}>
+                      川
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'rain' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('rain')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🌧️</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'rain' && styles.modeButtonTextSelected,
+                    ]}>
+                      雨
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.ambientRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'wave' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('wave')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🌊</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'wave' && styles.modeButtonTextSelected,
+                    ]}>
+                      波
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'bonfire' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('bonfire')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🔥</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'bonfire' && styles.modeButtonTextSelected,
+                    ]}>
+                      焚き火
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.ambientButton,
+                      ambientSound === 'space' && styles.modeButtonSelected,
+                    ]}
+                    onPress={() => handleAmbientSoundChange('space')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.ambientIcon}>🌌</Text>
+                    <Text style={[
+                      styles.modeButtonText,
+                      ambientSound === 'space' && styles.modeButtonTextSelected,
+                    ]}>
+                      宇宙
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
           {/* カレンダー連携セクション */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>カレンダー連携</Text>
@@ -469,6 +673,61 @@ const styles = StyleSheet.create({
   modeButtonTextSelected: {
     color: '#2D7A6E',
     fontWeight: '600',
+  },
+  guideSelector: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  guideOption: {
+    flex: 1,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+  },
+  guideOptionSelected: {
+    backgroundColor: 'rgba(255, 133, 162, 0.15)',
+    borderColor: '#FF85A2',
+  },
+  guideOptionTitle: {
+    fontSize: 13,
+    color: '#718096',
+    fontWeight: '600',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  guideOptionTitleSelected: {
+    color: '#FF85A2',
+  },
+  guideOptionDesc: {
+    fontSize: 10,
+    color: '#A0AEC0',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  ambientGrid: {
+    gap: 10,
+  },
+  ambientRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  ambientButton: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(122, 215, 240, 0.2)',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+  },
+  ambientIcon: {
+    fontSize: 20,
+    marginBottom: 4,
   },
   card: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',

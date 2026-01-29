@@ -16,28 +16,6 @@ import { getTrainingContent, isValidMenuId } from '@/constants/trainingContents'
 import { usePreferences } from '@/hooks/usePreferences';
 
 /**
- * 活性度を日本語ラベルに変換（Before用）
- * arousal: -1（不活性）〜 1（活性）
- */
-function getArousalLabel(arousal: number): string {
-  if (arousal > 0.5) return '高め';
-  if (arousal > 0) return 'やや高め';
-  if (arousal > -0.5) return 'やや低め';
-  return '低め';
-}
-
-/**
- * 快・不快を日本語ラベルに変換（Before用）
- * valence: -1（不快）〜 1（快）
- */
-function getValenceLabel(valence: number): string {
-  if (valence > 0.5) return '快';
-  if (valence > 0) return 'やや快';
-  if (valence > -0.5) return 'やや不快';
-  return '不快';
-}
-
-/**
  * からだスライダー値をラベルに変換（After用）
  * afterValence: -1（こわばっている）〜 +1（ゆるんでいる）
  */
@@ -76,6 +54,14 @@ function formatDateTime(isoString: string): string {
  * trainingMode に応じた表示名を返す
  */
 function getMenuName(meditationType: string, trainingMode: 'intuitive' | 'verbal'): string {
+  // タイマー/環境音モードの場合
+  if (meditationType === 'timer') {
+    return 'タイマー';
+  }
+  if (meditationType === 'ambient') {
+    return '環境音';
+  }
+  // 瞑想ガイドの場合
   if (isValidMenuId(meditationType)) {
     const content = getTrainingContent(meditationType);
     return content.title[trainingMode];
@@ -239,7 +225,7 @@ export default function TrackingScreen() {
                         { backgroundColor: emotionToChipColor(session.beforeValence, session.beforeArousal) }
                       ]}>
                         <Text style={styles.chipText}>
-                          {getValenceLabel(session.beforeValence)}
+                          からだ: {getBodyLabel(session.beforeValence)}
                         </Text>
                       </View>
                       <View style={[
@@ -247,7 +233,7 @@ export default function TrackingScreen() {
                         { backgroundColor: emotionToChipColor(session.beforeValence, session.beforeArousal) }
                       ]}>
                         <Text style={styles.chipText}>
-                          活性{getArousalLabel(session.beforeArousal)}
+                          こころ: {getMindLabel(session.beforeArousal)}
                         </Text>
                       </View>
                     </View>
