@@ -1,88 +1,86 @@
-import React, { useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Image,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { usePreferences } from '@/hooks/usePreferences';
 
 type TimeOption = {
   minutes: number;
   label: string;
+};
+
+type ModeOption = {
+  id: 'timer' | 'ambient' | 'guided';
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
   description: string;
 };
 
 const TIME_OPTIONS: TimeOption[] = [
-  { minutes: 0.5, label: '30秒', description: 'さくっと一息' },
-  { minutes: 5, label: '5分', description: 'ゆったり整える' },
-  { minutes: 10, label: '10分', description: 'じっくり向き合う' },
+  { minutes: 1, label: '1分' },
+  { minutes: 5, label: '5分' },
+  { minutes: 10, label: '10分' },
+];
+
+const MODE_OPTIONS: ModeOption[] = [
+  {
+    id: 'timer',
+    label: 'タイマーのみ',
+    icon: 'timer-outline',
+    description: 'シンプルに',
+  },
+  {
+    id: 'ambient',
+    label: '環境音',
+    icon: 'leaf-outline',
+    description: '心地よい音と',
+  },
+  {
+    id: 'guided',
+    label: '瞑想ガイド',
+    icon: 'headset-outline',
+    description: '音声に沿って',
+  },
 ];
 
 /**
- * TimeSelectScreen - トレーニング時間選択画面
+ * TimeSelectScreen - トレーニング時間・モード選択画面
  *
- * ユーザーはトレーニング時間（1/5/10分）を選択し、
+ * ユーザーはトレーニング時間（1/5/10分）とモード（タイマー/環境音/瞑想ガイド）を選択し、
  * タイマー画面へ進みます。
  */
 export default function TimeSelectScreen() {
   const params = useLocalSearchParams<{
-    beforeBody: string;
     beforeMind: string;
     memo: string;
   }>();
-  const { guideMode, ambientSound } = usePreferences();
 
-  const handleSelectTime = useCallback((minutes: number) => {
+  const [selectedTime, setSelectedTime] = useState<number>(5);
+  const [selectedMode, setSelectedMode] = useState<'timer' | 'ambient' | 'guided'>('timer');
+
+  const handleStart = useCallback(() => {
     router.push({
       pathname: '/timer',
       params: {
-        beforeBody: params.beforeBody,
         beforeMind: params.beforeMind,
         memo: params.memo ?? '',
-        duration: minutes.toString(),
+        duration: selectedTime.toString(),
+        mode: selectedMode,
       },
     });
-  }, [params]);
+  }, [params, selectedTime, selectedMode]);
 
   const handleBack = useCallback(() => {
     router.back();
   }, []);
-
-  // ガイドモードに応じたアイコンとタイトル
-  const getModeInfo = () => {
-    switch (guideMode) {
-      case 'ambient':
-        return {
-          icon: 'leaf-outline' as const,
-          title: '環境音モード',
-          subtitle: getAmbientSoundLabel(ambientSound),
-        };
-      case 'timer':
-      default:
-        return {
-          icon: 'timer-outline' as const,
-          title: 'タイマーモード',
-          subtitle: 'シンプルに時間を測る',
-        };
-    }
-  };
-
-  const getAmbientSoundLabel = (sound: string): string => {
-    switch (sound) {
-      case 'forest': return '森の音とともに';
-      case 'wave': return '波の音とともに';
-      case 'rain': return '雨の音とともに';
-      default: return '';
-    }
-  };
-
-  const modeInfo = getModeInfo();
 
   return (
     <LinearGradient
@@ -97,45 +95,95 @@ export default function TimeSelectScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* モード表示 */}
-        <View style={styles.modeSection}>
-          <View style={styles.modeIconContainer}>
-            <Ionicons name={modeInfo.icon} size={32} color="#FF85A2" />
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 時間選択 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>時間を選んでね</Text>
+            <View style={styles.timeSelector}>
+              {TIME_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.minutes}
+                  style={[
+                    styles.timeButton,
+                    selectedTime === option.minutes && styles.timeButtonSelected,
+                  ]}
+                  onPress={() => setSelectedTime(option.minutes)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    styles.timeButtonText,
+                    selectedTime === option.minutes && styles.timeButtonTextSelected,
+                  ]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-          <Text style={styles.modeTitle}>{modeInfo.title}</Text>
-          <Text style={styles.modeSubtitle}>{modeInfo.subtitle}</Text>
-        </View>
 
-        {/* タイトル */}
-        <Text style={styles.title}>時間を選んでね！</Text>
+          {/* モード選択 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>モードを選んでね</Text>
+            <View style={styles.modeSelector}>
+              {MODE_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[
+                    styles.modeButton,
+                    selectedMode === option.id && styles.modeButtonSelected,
+                  ]}
+                  onPress={() => setSelectedMode(option.id)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={option.icon}
+                    size={28}
+                    color={selectedMode === option.id ? '#FF85A2' : '#718096'}
+                  />
+                  <Text style={[
+                    styles.modeButtonTitle,
+                    selectedMode === option.id && styles.modeButtonTitleSelected,
+                  ]}>
+                    {option.label}
+                  </Text>
+                  <Text style={styles.modeButtonDesc}>
+                    {option.description}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
 
-        {/* 時間選択カード */}
-        <View style={styles.cardsContainer}>
-          {TIME_OPTIONS.map((option) => (
-            <TouchableOpacity
-              key={option.minutes}
-              style={styles.card}
-              onPress={() => handleSelectTime(option.minutes)}
-              activeOpacity={0.8}
+          {/* りなわん */}
+          <View style={styles.mascotSection}>
+            <Image
+              source={require('@/assets/images/rinawan_tilting_head.gif')}
+              style={styles.mascotImage}
+              resizeMode="contain"
+            />
+          </View>
+        </ScrollView>
+
+        {/* スタートボタン */}
+        <View style={styles.footer}>
+          <TouchableOpacity
+            onPress={handleStart}
+            activeOpacity={0.8}
+            style={styles.startButtonWrapper}
+          >
+            <LinearGradient
+              colors={['#FF85A2', '#FFB6C1']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.startButton}
             >
-              <LinearGradient
-                colors={['#FFFFFF', '#FFF5F7']}
-                style={styles.cardGradient}
-              >
-                <Text style={styles.cardTime}>{option.label}</Text>
-                <Text style={styles.cardDescription}>{option.description}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* りなわん */}
-        <View style={styles.mascotSection}>
-          <Image
-            source={require('@/assets/images/rinawan_tilting_head.gif')}
-            style={styles.mascotImage}
-            resizeMode="contain"
-          />
+              <Text style={styles.startButtonText}>スタート</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     </LinearGradient>
@@ -164,83 +212,124 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
 
-  // モード表示
-  modeSection: {
-    alignItems: 'center',
-    marginTop: 16,
+  // セクション
+  section: {
     marginBottom: 24,
   },
-  modeIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(255, 133, 162, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  modeTitle: {
+  sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#4A5568',
-    marginBottom: 4,
-  },
-  modeSubtitle: {
-    fontSize: 14,
-    color: '#718096',
-  },
-
-  // タイトル
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#4A5568',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
   },
 
-  // カード
-  cardsContainer: {
-    paddingHorizontal: 24,
-    gap: 16,
+  // 時間選択
+  timeSelector: {
+    flexDirection: 'row',
+    gap: 12,
   },
-  card: {
-    borderRadius: 20,
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  cardGradient: {
-    borderRadius: 20,
-    paddingVertical: 24,
-    paddingHorizontal: 24,
+  timeButton: {
+    flex: 1,
+    paddingVertical: 20,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 2,
+    borderColor: 'transparent',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.4)',
   },
-  cardTime: {
-    fontSize: 32,
+  timeButtonSelected: {
+    backgroundColor: 'rgba(255, 133, 162, 0.15)',
+    borderColor: '#FF85A2',
+  },
+  timeButtonText: {
+    fontSize: 24,
     fontWeight: '700',
+    color: '#718096',
+  },
+  timeButtonTextSelected: {
     color: '#FF85A2',
+  },
+
+  // モード選択
+  modeSelector: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modeButton: {
+    flex: 1,
+    paddingVertical: 20,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+  },
+  modeButtonSelected: {
+    backgroundColor: 'rgba(255, 133, 162, 0.15)',
+    borderColor: '#FF85A2',
+  },
+  modeButtonTitle: {
+    fontSize: 13,
+    color: '#718096',
+    fontWeight: '600',
+    marginTop: 8,
     marginBottom: 4,
   },
-  cardDescription: {
-    fontSize: 14,
-    color: '#718096',
+  modeButtonTitleSelected: {
+    color: '#FF85A2',
+  },
+  modeButtonDesc: {
+    fontSize: 11,
+    color: '#A0AEC0',
+    textAlign: 'center',
   },
 
   // りなわん
   mascotSection: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingBottom: 32,
+    paddingVertical: 16,
   },
   mascotImage: {
     width: 100,
     height: 100,
+  },
+
+  // フッター
+  footer: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  startButtonWrapper: {
+    borderRadius: 25,
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  startButton: {
+    borderRadius: 25,
+    paddingVertical: 14,
+    paddingHorizontal: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  startButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

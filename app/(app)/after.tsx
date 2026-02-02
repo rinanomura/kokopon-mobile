@@ -38,16 +38,21 @@ const MASCOT_MESSAGES = [
  * Phase 2: りなわん吹き出し + ホームへ戻る
  */
 export default function AfterScreen() {
-  const params = useLocalSearchParams<{ sessionId: string }>();
+  const params = useLocalSearchParams<{
+    sessionId: string;
+    beforeMind: string;
+  }>();
 
   const [session, setSession] = useState<SessionLog | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [recorded, setRecorded] = useState(false);
 
-  // スライダー値
-  const [bodyValue, setBodyValue] = useState(0);   // からだ: -1(こわばっている) ~ +1(ゆるんでいる)
-  const [mindValue, setMindValue] = useState(0);   // こころ: -1(ざわざわ) ~ +1(しずか)
+  // スライダー値（ホーム画面で選んだ値を初期値に）
+  const [mindValue, setMindValue] = useState(() => {
+    const beforeMind = parseFloat(params.beforeMind ?? '0');
+    return isNaN(beforeMind) ? 0 : beforeMind;
+  });   // こころ: -1(ざわざわ) ~ +1(しずか)
 
   // メモ
   const [memo, setMemo] = useState('');
@@ -91,7 +96,7 @@ export default function AfterScreen() {
     try {
       await updateSessionLog(
         session.id,
-        bodyValue,    // afterValence: からだ
+        0,            // afterValence: からだは削除されたので0
         mindValue,    // afterArousal: こころ
         memo || undefined,
       );
@@ -101,7 +106,7 @@ export default function AfterScreen() {
     } finally {
       setSaving(false);
     }
-  }, [session?.id, bodyValue, mindValue, memo]);
+  }, [session?.id, mindValue, memo]);
 
   /**
    * ホームへ戻る
@@ -243,13 +248,6 @@ export default function AfterScreen() {
           >
             {/* スライダーセクション */}
             <View style={styles.slidersContainer}>
-              <MindfulSlider
-                label="からだ"
-                leftLabel="こわばっている"
-                rightLabel="ゆるんでいる"
-                value={bodyValue}
-                onValueChange={setBodyValue}
-              />
               <MindfulSlider
                 label="こころ"
                 leftLabel="ざわざわ"

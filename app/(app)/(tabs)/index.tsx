@@ -17,7 +17,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useFootprints } from '@/hooks/useFootprints';
-import { usePreferences } from '@/hooks/usePreferences';
 import MindfulSlider from '@/components/MindfulSlider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -25,15 +24,13 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 /**
  * HomeScreen - トレーニング開始画面
  *
- * ユーザーは「からだ」「こころ」の状態をスライダーで入力し、
+ * ユーザーは「こころ」の状態をスライダーで入力し、
  * トレーニングへ進みます。
  */
 export default function HomeScreen() {
   const { addFootprint } = useFootprints();
-  const { guideMode } = usePreferences();
 
   // スライダー値
-  const [bodyValue, setBodyValue] = useState(0);   // からだ: -1(こわばっている) ~ +1(ゆるんでいる)
   const [mindValue, setMindValue] = useState(0);   // こころ: -1(ざわざわ) ~ +1(しずか)
 
   // メモ
@@ -97,29 +94,15 @@ export default function HomeScreen() {
   const handleProceed = useCallback(async () => {
     await addFootprint();
 
-    // ガイドモードに応じて遷移先を分岐
-    if (guideMode === 'guided') {
-      // ③瞑想ガイド: 感情円環画面へ
-      router.push({
-        pathname: '/emotion-select',
-        params: {
-          beforeBody: bodyValue.toString(),
-          beforeMind: mindValue.toString(),
-          memo: memo,
-        },
-      });
-    } else {
-      // ①タイマー / ②環境音: 時間選択画面へ
-      router.push({
-        pathname: '/time-select',
-        params: {
-          beforeBody: bodyValue.toString(),
-          beforeMind: mindValue.toString(),
-          memo: memo,
-        },
-      });
-    }
-  }, [bodyValue, mindValue, memo, guideMode, addFootprint]);
+    // 時間選択画面へ遷移
+    router.push({
+      pathname: '/time-select',
+      params: {
+        beforeMind: mindValue.toString(),
+        memo: memo,
+      },
+    });
+  }, [mindValue, memo, addFootprint]);
 
   return (
     <LinearGradient
@@ -152,13 +135,6 @@ export default function HomeScreen() {
           >
             {/* スライダーセクション */}
             <View style={styles.slidersContainer}>
-              <MindfulSlider
-                label="からだ"
-                leftLabel="こわばっている"
-                rightLabel="ゆるんでいる"
-                value={bodyValue}
-                onValueChange={setBodyValue}
-              />
               <MindfulSlider
                 label="こころ"
                 leftLabel="ざわざわ"
