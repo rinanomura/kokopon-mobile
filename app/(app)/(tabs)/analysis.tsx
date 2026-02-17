@@ -11,6 +11,7 @@ import {
   Modal,
   TextInput,
   Image,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +19,7 @@ import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useThemeColors } from '@/hooks/useThemeColors';
 import {
   useGoogleAuth,
   exchangeCodeForToken,
@@ -149,6 +151,7 @@ function getBusyLevel(eventCount: number): { label: string; color: string } {
  * AnalysisScreen - 分析画面
  */
 export default function AnalysisScreen() {
+  const colors = useThemeColors();
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
 
   const [activeTab, setActiveTab] = useState<TabType>('check');
@@ -1865,12 +1868,13 @@ export default function AnalysisScreen() {
   );
 
   return (
-    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* ヘッダー */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Text style={styles.title}>分析</Text>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>分析</Text>
             {isConnected && calendars.length > 1 && (
               <TouchableOpacity
                 style={styles.calendarSelectButton}

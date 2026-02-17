@@ -454,7 +454,27 @@ const MINDFUL_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」という�
 【値の意味（1〜3）】
 - body: 身体の感じ（1=軽い、2=ふつう、3=重い）
 - mind: 心の感じ（1=軽い、2=ふつう、3=重い）
-- reactivity: 心の反応しやすさ（1=敏感だがすぐに安定、2=敏感な状態が続く、3=常に安定）
+- reactivity: 心の反応しやすさ（1=揺れて戻らない、2=揺れて戻る、3=安定している）
+
+【ルール】
+- 1〜2文、30文字以内
+- アドバイスではなく、気持ちへの寄り添い
+- 選んだ状態をやさしくケアする一言
+- 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は使わない
+- やさしい日常の言葉だけを使う`;
+
+const MINDFUL_COMMENT_SIMPLE_SYSTEM_PROMPT = `あなたはマインドフルネスの案内役です。
+ユーザーが入力した3つの心身状態の値をもとに、やさしく寄り添う一言を生成してください。
+
+【口調】
+- キャラクター名は名乗らない
+- 親しみやすい敬語調（「〜ですね」「〜ましょう」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+
+【値の意味（1〜3）】
+- body: 身体の感じ（1=軽い、2=ふつう、3=重い）
+- mind: 心の感じ（1=軽い、2=ふつう、3=重い）
+- reactivity: 心の反応しやすさ（1=揺れて戻らない、2=揺れて戻る、3=安定している）
 
 【ルール】
 - 1〜2文、30文字以内
@@ -471,23 +491,34 @@ const MINDFUL_COMMENT_FALLBACK_MESSAGES = [
   '今のままで大丈夫だよ',
 ];
 
+const MINDFUL_COMMENT_SIMPLE_FALLBACK_MESSAGES = [
+  '今のご自身に気づけましたね',
+  '教えてくださりありがとうございます',
+  'ゆっくりしていきましょう',
+  'ご自身を感じる時間ですね',
+  '今のままで大丈夫ですよ',
+];
+
 /**
- * 3つの選択値からりなわんの一言コメントを生成
+ * 3つの選択値から一言コメントを生成
  */
 export async function generateMindfulComment(params: {
   body: number;
   mind: number;
   reactivity: number;
+  designTheme?: 'cute' | 'simple';
 }): Promise<string> {
+  const isSimple = params.designTheme === 'simple';
+  const systemPrompt = isSimple ? MINDFUL_COMMENT_SIMPLE_SYSTEM_PROMPT : MINDFUL_COMMENT_SYSTEM_PROMPT;
+  const fallbacks = isSimple ? MINDFUL_COMMENT_SIMPLE_FALLBACK_MESSAGES : MINDFUL_COMMENT_FALLBACK_MESSAGES;
+
   try {
     const prompt = `body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}`;
-    const result = await callOpenRouter(prompt, MINDFUL_COMMENT_SYSTEM_PROMPT, 'classification');
+    const result = await callOpenRouter(prompt, systemPrompt, 'classification');
     return result.trim().replace(/^[「『]|[」』]$/g, '');
   } catch (error) {
     console.error('generateMindfulComment error:', error);
-    return MINDFUL_COMMENT_FALLBACK_MESSAGES[
-      Math.floor(Math.random() * MINDFUL_COMMENT_FALLBACK_MESSAGES.length)
-    ];
+    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
   }
 }
 
@@ -506,22 +537,47 @@ const AFTER_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」というや�
 - やさしい日常の言葉だけを使う
 - 「〜だね」「〜だよ」のやさしい語尾`;
 
+const AFTER_COMMENT_SIMPLE_SYSTEM_PROMPT = `あなたはマインドフルネスの案内役です。
+瞑想トレーニングを終えたユーザーに、やさしく寄り添う一言を生成してください。
+
+【口調】
+- キャラクター名は名乗らない
+- 親しみやすい敬語調（「〜ですね」「〜ましたね」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+
+【ルール】
+- 1〜2文
+- ねぎらいの気持ちを込める
+- 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は絶対に使わない
+- やさしい日常の言葉だけを使う
+- 「〜ですね」「〜ましたね」の親しみやすい敬語`;
+
 /**
- * トレーニング後のりなわんコメントを生成
+ * トレーニング後のコメントを生成
  */
 export async function generateAfterComment(params: {
   body: number;
   mind: number;
   reactivity: number;
   meditationGuideId: string;
+  designTheme?: 'cute' | 'simple';
 }): Promise<string> {
+  const isSimple = params.designTheme === 'simple';
+  const systemPrompt = isSimple ? AFTER_COMMENT_SIMPLE_SYSTEM_PROMPT : AFTER_COMMENT_SYSTEM_PROMPT;
+
   try {
     const prompt = `瞑想前の状態: body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}\n実施した瞑想タイプ: ${params.meditationGuideId}\n\nトレーニングを終えたユーザーへのやさしい一言を生成してください。`;
-    const result = await callOpenRouter(prompt, AFTER_COMMENT_SYSTEM_PROMPT, 'classification');
+    const result = await callOpenRouter(prompt, systemPrompt, 'classification');
     return result.trim().replace(/^[「『]|[」』]$/g, '');
   } catch (error) {
     console.error('generateAfterComment error:', error);
-    const fallbacks = [
+    const fallbacks = isSimple ? [
+      'おつかれさまでした。\n今日もご自身と向き合う時間を取れましたね。',
+      'すばらしいですね。\nまた気が向いたらいつでもどうぞ。',
+      'おつかれさまでした。\nどんな感覚でも、気づけたことが大切です。',
+      'ありがとうございます。\n今の自分に気づけましたね。',
+      'よくがんばりましたね。\nゆっくりお休みください。',
+    ] : [
       'おつかれさま！\n今日も自分と過ごす時間をつくれたね。',
       'えらいね！\nまた気が向いたら会いに来てね。',
       'おつかれさま！\nどんな感覚でも、気づけたことがすばらしいよ。',

@@ -9,13 +9,15 @@ import {
   Switch,
   ActivityIndicator,
   Modal,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { signOut } from 'aws-amplify/auth';
 import { router } from 'expo-router';
-import { usePreferences, TrainingMode, VoiceType, GuideMode, AmbientSound, NotificationTime } from '@/hooks/usePreferences';
+import { usePreferences, TrainingMode, VoiceType, GuideMode, AmbientSound, NotificationTime, DesignTheme } from '@/hooks/usePreferences';
+import { useThemeColors } from '@/hooks/useThemeColors';
 import { resetClient } from '@/lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -53,7 +55,10 @@ export default function SettingsScreen() {
     addNotificationTime,
     updateNotificationTime,
     removeNotificationTime,
+    designTheme,
+    setDesignTheme,
   } = usePreferences();
+  const colors = useThemeColors();
 
   // Googleカレンダー連携
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
@@ -362,27 +367,76 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleDesignThemeChange = (theme: DesignTheme) => {
+    setDesignTheme(theme);
+  };
+
   return (
-    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.title}>設定</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>設定</Text>
 
-          {/* トレーニングモード設定 */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>トレーニング表示モード</Text>
+          {/* デザインテーマ設定 */}
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>デザインテーマ</Text>
             <View style={styles.modeSelector}>
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  trainingMode === 'intuitive' && styles.modeButtonSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  designTheme === 'cute' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
+                ]}
+                onPress={() => handleDesignThemeChange('cute')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.modeButtonText,
+                  { color: colors.textSecondary },
+                  designTheme === 'cute' && { color: colors.selectorSelectedText, fontWeight: '600' },
+                ]}>
+                  キュート
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modeButton,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  designTheme === 'simple' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
+                ]}
+                onPress={() => handleDesignThemeChange('simple')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.modeButtonText,
+                  { color: colors.textSecondary },
+                  designTheme === 'simple' && { color: colors.selectorSelectedText, fontWeight: '600' },
+                ]}>
+                  シンプル
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>アプリ全体のデザインが変わります</Text>
+          </View>
+
+          {/* トレーニングモード設定 */}
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>トレーニング表示モード</Text>
+            <View style={styles.modeSelector}>
+              <TouchableOpacity
+                style={[
+                  styles.modeButton,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  trainingMode === 'intuitive' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
                 ]}
                 onPress={() => handleModeChange('intuitive')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  trainingMode === 'intuitive' && styles.modeButtonTextSelected,
+                  { color: colors.textSecondary },
+                  trainingMode === 'intuitive' && { color: colors.selectorSelectedText, fontWeight: '600' },
                 ]}>
                   直感モード
                 </Text>
@@ -390,37 +444,41 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  trainingMode === 'verbal' && styles.modeButtonSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  trainingMode === 'verbal' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
                 ]}
                 onPress={() => handleModeChange('verbal')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  trainingMode === 'verbal' && styles.modeButtonTextSelected,
+                  { color: colors.textSecondary },
+                  trainingMode === 'verbal' && { color: colors.selectorSelectedText, fontWeight: '600' },
                 ]}>
                   言語化モード
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.sectionHint}>途中でいつでも変更できます</Text>
+            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>途中でいつでも変更できます</Text>
           </View>
 
           {/* 音声ガイド設定 */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>音声ガイドの話者</Text>
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>音声ガイドの話者</Text>
             <View style={styles.modeSelector}>
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  voice === 'rina' && styles.modeButtonSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  voice === 'rina' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
                 ]}
                 onPress={() => handleVoiceChange('rina')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  voice === 'rina' && styles.modeButtonTextSelected,
+                  { color: colors.textSecondary },
+                  voice === 'rina' && { color: colors.selectorSelectedText, fontWeight: '600' },
                 ]}>
                   野村里奈
                 </Text>
@@ -428,30 +486,33 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.modeButton,
-                  voice === 'rinawan' && styles.modeButtonSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  voice === 'rinawan' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
                 ]}
                 onPress={() => handleVoiceChange('rinawan')}
                 activeOpacity={0.7}
               >
                 <Text style={[
                   styles.modeButtonText,
-                  voice === 'rinawan' && styles.modeButtonTextSelected,
+                  { color: colors.textSecondary },
+                  voice === 'rinawan' && { color: colors.selectorSelectedText, fontWeight: '600' },
                 ]}>
                   りなわん
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.sectionHint}>瞑想画面で使用する音声ガイドの声を選択</Text>
+            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>瞑想画面で使用する音声ガイドの声を選択</Text>
           </View>
 
           {/* ガイドモード設定 */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>瞑想ガイド</Text>
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>瞑想ガイド</Text>
             <View style={styles.guideSelector}>
               <TouchableOpacity
                 style={[
                   styles.guideOption,
-                  guideMode === 'timer' && styles.guideOptionSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  guideMode === 'timer' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
                 ]}
                 onPress={() => handleGuideModeChange('timer')}
                 activeOpacity={0.7}
@@ -459,15 +520,16 @@ export default function SettingsScreen() {
                 <Ionicons
                   name="timer-outline"
                   size={24}
-                  color={guideMode === 'timer' ? '#FF85A2' : '#718096'}
+                  color={guideMode === 'timer' ? colors.accent : colors.textSecondary}
                 />
                 <Text style={[
                   styles.guideOptionTitle,
-                  guideMode === 'timer' && styles.guideOptionTitleSelected,
+                  { color: colors.textSecondary },
+                  guideMode === 'timer' && { color: colors.accent },
                 ]}>
                   タイマーのみ
                 </Text>
-                <Text style={styles.guideOptionDesc}>
+                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
                   シンプルなタイマーで{'\n'}自分のペースで
                 </Text>
               </TouchableOpacity>
@@ -475,7 +537,8 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.guideOption,
-                  guideMode === 'ambient' && styles.guideOptionSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  guideMode === 'ambient' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
                 ]}
                 onPress={() => handleGuideModeChange('ambient')}
                 activeOpacity={0.7}
@@ -483,15 +546,16 @@ export default function SettingsScreen() {
                 <Ionicons
                   name="leaf-outline"
                   size={24}
-                  color={guideMode === 'ambient' ? '#FF85A2' : '#718096'}
+                  color={guideMode === 'ambient' ? colors.accent : colors.textSecondary}
                 />
                 <Text style={[
                   styles.guideOptionTitle,
-                  guideMode === 'ambient' && styles.guideOptionTitleSelected,
+                  { color: colors.textSecondary },
+                  guideMode === 'ambient' && { color: colors.accent },
                 ]}>
                   環境音
                 </Text>
-                <Text style={styles.guideOptionDesc}>
+                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
                   心地よい環境音{'\n'}とともに
                 </Text>
               </TouchableOpacity>
@@ -499,7 +563,8 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[
                   styles.guideOption,
-                  guideMode === 'guided' && styles.guideOptionSelected,
+                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                  guideMode === 'guided' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
                 ]}
                 onPress={() => handleGuideModeChange('guided')}
                 activeOpacity={0.7}
@@ -507,15 +572,16 @@ export default function SettingsScreen() {
                 <Ionicons
                   name="headset-outline"
                   size={24}
-                  color={guideMode === 'guided' ? '#FF85A2' : '#718096'}
+                  color={guideMode === 'guided' ? colors.accent : colors.textSecondary}
                 />
                 <Text style={[
                   styles.guideOptionTitle,
-                  guideMode === 'guided' && styles.guideOptionTitleSelected,
+                  { color: colors.textSecondary },
+                  guideMode === 'guided' && { color: colors.accent },
                 ]}>
                   瞑想ガイド
                 </Text>
-                <Text style={styles.guideOptionDesc}>
+                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
                   音声ガイドに{'\n'}沿って
                 </Text>
               </TouchableOpacity>
@@ -524,117 +590,53 @@ export default function SettingsScreen() {
 
           {/* 環境音選択（環境音モード時のみ表示） */}
           {guideMode === 'ambient' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>環境音の種類</Text>
+            <View style={[styles.section, { backgroundColor: colors.card }]}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>環境音の種類</Text>
               <View style={styles.ambientGrid}>
-                <View style={styles.ambientRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'birds' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('birds')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🐦</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'birds' && styles.modeButtonTextSelected,
-                    ]}>
-                      小鳥
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'river' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('river')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🏞️</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'river' && styles.modeButtonTextSelected,
-                    ]}>
-                      川
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'rain' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('rain')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🌧️</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'rain' && styles.modeButtonTextSelected,
-                    ]}>
-                      雨
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.ambientRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'wave' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('wave')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🌊</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'wave' && styles.modeButtonTextSelected,
-                    ]}>
-                      波
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'bonfire' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('bonfire')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🔥</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'bonfire' && styles.modeButtonTextSelected,
-                    ]}>
-                      焚き火
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.ambientButton,
-                      ambientSound === 'space' && styles.modeButtonSelected,
-                    ]}
-                    onPress={() => handleAmbientSoundChange('space')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.ambientIcon}>🌌</Text>
-                    <Text style={[
-                      styles.modeButtonText,
-                      ambientSound === 'space' && styles.modeButtonTextSelected,
-                    ]}>
-                      宇宙
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                {[
+                  [
+                    { id: 'birds' as AmbientSound, icon: '🐦', label: '小鳥' },
+                    { id: 'river' as AmbientSound, icon: '🏞️', label: '川' },
+                    { id: 'rain' as AmbientSound, icon: '🌧️', label: '雨' },
+                  ],
+                  [
+                    { id: 'wave' as AmbientSound, icon: '🌊', label: '波' },
+                    { id: 'bonfire' as AmbientSound, icon: '🔥', label: '焚き火' },
+                    { id: 'singing_bowls' as AmbientSound, icon: '🌌', label: 'シンギングボール' },
+                  ],
+                ].map((row, rowIndex) => (
+                  <View key={rowIndex} style={styles.ambientRow}>
+                    {row.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[
+                          styles.ambientButton,
+                          { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                          ambientSound === item.id && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
+                        ]}
+                        onPress={() => handleAmbientSoundChange(item.id)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.ambientIcon}>{item.icon}</Text>
+                        <Text style={[
+                          styles.modeButtonText,
+                          { color: colors.textSecondary },
+                          ambientSound === item.id && { color: colors.selectorSelectedText, fontWeight: '600' },
+                        ]}>
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ))}
               </View>
             </View>
           )}
 
           {/* 瞑想リマインダーセクション */}
-          <View style={styles.section}>
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>瞑想リマインダー</Text>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>瞑想リマインダー</Text>
               <TouchableOpacity
                 style={styles.addButton}
                 onPress={handleAddNotification}
@@ -700,7 +702,9 @@ export default function SettingsScreen() {
               </>
             )}
 
-            <Text style={styles.sectionHint}>りなわんが毎日お知らせします</Text>
+            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>
+              {colors.showMascot ? 'りなわんが毎日お知らせします' : '毎日お知らせします'}
+            </Text>
           </View>
 
           {/* 時刻選択モーダル */}
@@ -791,8 +795,8 @@ export default function SettingsScreen() {
           </Modal>
 
           {/* カレンダー連携セクション */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>カレンダー連携</Text>
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>カレンダー連携</Text>
 
             {loading ? (
               <View style={styles.loadingContainer}>
@@ -882,8 +886,8 @@ export default function SettingsScreen() {
           </View>
 
           {/* アカウントセクション */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>アカウント</Text>
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>アカウント</Text>
             <TouchableOpacity
               style={styles.menuItem}
               onPress={handleSignOut}

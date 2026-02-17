@@ -6,12 +6,14 @@ import {
   GuideMode,
   AmbientSound,
   NotificationTime,
+  DesignTheme,
   STORAGE_KEYS,
   DEFAULT_TRAINING_MODE,
   DEFAULT_VOICE,
   DEFAULT_GUIDE_MODE,
   DEFAULT_AMBIENT_SOUND,
   DEFAULT_NOTIFICATION_TIMES,
+  DEFAULT_DESIGN_THEME,
 } from '@/hooks/usePreferences';
 
 // Context の型定義
@@ -33,6 +35,9 @@ type PreferencesContextType = {
   addNotificationTime: (hour: number, minute: number) => Promise<void>;
   updateNotificationTime: (id: string, updates: Partial<Omit<NotificationTime, 'id'>>) => Promise<void>;
   removeNotificationTime: (id: string) => Promise<void>;
+  // デザインテーマ
+  designTheme: DesignTheme;
+  setDesignTheme: (theme: DesignTheme) => Promise<void>;
   // 読み込み完了フラグ
   isLoaded: boolean;
 };
@@ -54,18 +59,20 @@ export function PreferencesProvider({ children }: Props) {
   const [guideMode, setGuideModeState] = useState<GuideMode>(DEFAULT_GUIDE_MODE);
   const [ambientSound, setAmbientSoundState] = useState<AmbientSound>(DEFAULT_AMBIENT_SOUND);
   const [notificationTimes, setNotificationTimesState] = useState<NotificationTime[]>(DEFAULT_NOTIFICATION_TIMES);
+  const [designTheme, setDesignThemeState] = useState<DesignTheme>(DEFAULT_DESIGN_THEME);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // 初期化: AsyncStorage から読み込み
   useEffect(() => {
     const loadPreferences = async () => {
       try {
-        const [storedMode, storedVoice, storedGuideMode, storedAmbientSound, storedNotifTimes] = await Promise.all([
+        const [storedMode, storedVoice, storedGuideMode, storedAmbientSound, storedNotifTimes, storedDesignTheme] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.TRAINING_MODE),
           AsyncStorage.getItem(STORAGE_KEYS.VOICE),
           AsyncStorage.getItem(STORAGE_KEYS.GUIDE_MODE),
           AsyncStorage.getItem(STORAGE_KEYS.AMBIENT_SOUND),
           AsyncStorage.getItem(STORAGE_KEYS.NOTIFICATION_TIMES),
+          AsyncStorage.getItem(STORAGE_KEYS.DESIGN_THEME),
         ]);
 
         if (storedMode === 'intuitive' || storedMode === 'verbal') {
@@ -89,6 +96,9 @@ export function PreferencesProvider({ children }: Props) {
           } catch {
             console.log('通知設定のパースエラー');
           }
+        }
+        if (storedDesignTheme === 'cute' || storedDesignTheme === 'simple') {
+          setDesignThemeState(storedDesignTheme);
         }
       } catch (error) {
         console.log('設定読み込みエラー:', error);
@@ -137,6 +147,16 @@ export function PreferencesProvider({ children }: Props) {
       setAmbientSoundState(newSound);
     } catch (error) {
       console.log('環境音設定保存エラー:', error);
+    }
+  }, []);
+
+  // デザインテーマ変更
+  const setDesignTheme = useCallback(async (newTheme: DesignTheme) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.DESIGN_THEME, newTheme);
+      setDesignThemeState(newTheme);
+    } catch (error) {
+      console.log('デザインテーマ保存エラー:', error);
     }
   }, []);
 
@@ -194,6 +214,8 @@ export function PreferencesProvider({ children }: Props) {
         addNotificationTime,
         updateNotificationTime,
         removeNotificationTime,
+        designTheme,
+        setDesignTheme,
         isLoaded,
       }}
     >

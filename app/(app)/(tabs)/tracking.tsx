@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,10 +15,10 @@ import { listSessionLogs, SessionLog } from '@/lib/api';
 import { emotionToChipColor, getMissingChipColor } from '@/lib/emotionColor';
 import { getTrainingContent, isValidMenuId } from '@/constants/trainingContents';
 import { usePreferences } from '@/hooks/usePreferences';
+import { useThemeColors } from '@/hooks/useThemeColors';
 
 /**
  * からだスライダー値をラベルに変換（After用）
- * afterValence: -1（こわばっている）〜 +1（ゆるんでいる）
  */
 function getBodyLabel(value: number): string {
   if (value > 0.5) return 'ゆるんでいる';
@@ -28,7 +29,6 @@ function getBodyLabel(value: number): string {
 
 /**
  * こころスライダー値をラベルに変換（After用）
- * afterArousal: -1（ざわざわ）〜 +1（しずか）
  */
 function getMindLabel(value: number): string {
   if (value > 0.5) return 'しずか';
@@ -51,17 +51,10 @@ function formatDateTime(isoString: string): string {
 
 /**
  * meditationType からトレーニング名を取得
- * trainingMode に応じた表示名を返す
  */
 function getMenuName(meditationType: string, trainingMode: 'intuitive' | 'verbal'): string {
-  // タイマー/環境音モードの場合
-  if (meditationType === 'timer') {
-    return 'タイマー';
-  }
-  if (meditationType === 'ambient') {
-    return '環境音';
-  }
-  // 瞑想ガイドの場合
+  if (meditationType === 'timer') return 'タイマー';
+  if (meditationType === 'ambient') return '環境音';
   if (isValidMenuId(meditationType)) {
     const content = getTrainingContent(meditationType);
     return content.title[trainingMode];
@@ -71,24 +64,21 @@ function getMenuName(meditationType: string, trainingMode: 'intuitive' | 'verbal
 
 /**
  * TrackingScreen - トラッキング画面
- *
- * 過去のセッション履歴を表示
  */
 export default function TrackingScreen() {
-  const { trainingMode } = usePreferences();
+  const { trainingMode, designTheme } = usePreferences();
+  const colors = useThemeColors();
   const [sessions, setSessions] = useState<SessionLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   /**
-   * 継続を促すメッセージを生成（りなわん口調）
-   * フレンドリーかつ礼儀正しいタメ口
+   * 継続を促すメッセージを生成
    */
   const encouragementMessage = useMemo(() => {
     const total = sessions.length;
     if (total === 0) return null;
 
-    // 最近1週間のセッション数
     const now = new Date();
     const sevenDaysAgo = new Date(now);
     sevenDaysAgo.setDate(now.getDate() - 6);
@@ -99,30 +89,25 @@ export default function TrackingScreen() {
       return sessionDate >= sevenDaysAgo;
     }).length;
 
-    // りなわん口調のメッセージ
-    if (total === 1) {
-      return '最初の一歩だね！\nまた会えるの楽しみにしてるよ';
+    if (designTheme === 'simple') {
+      if (total === 1) return '最初の一歩ですね。\nまたお待ちしています。';
+      if (total <= 3) return `${total}回目のセッションですね。\nすばらしいです。`;
+      if (weeklyCount >= 3) return `今週${weeklyCount}回のセッションですね。\n継続されていますね。`;
+      if (weeklyCount >= 1) return 'またお越しいただけましたね。\nいつでもお待ちしています。';
+      return 'お久しぶりです。\nまたお気軽にどうぞ。';
     }
-    if (total <= 3) {
-      return `${total}回も来てくれたんだね！\nうれしいな`;
-    }
-    if (weeklyCount >= 3) {
-      return `今週${weeklyCount}回も会えたね！\nいつもありがとう`;
-    }
-    if (weeklyCount >= 1) {
-      return 'また会えてうれしいな！\nいつでも待ってるからね';
-    }
-    // 今週0回だが過去にはある
-    return 'ひさしぶり！\nまた気が向いたら遊びに来てね';
-  }, [sessions]);
 
-  /**
-   * セッション履歴を取得
-   */
+    // かわいいモード（りなわん口調）
+    if (total === 1) return '最初の一歩だね！\nまた会えるの楽しみにしてるよ';
+    if (total <= 3) return `${total}回も来てくれたんだね！\nうれしいな`;
+    if (weeklyCount >= 3) return `今週${weeklyCount}回も会えたね！\nいつもありがとう`;
+    if (weeklyCount >= 1) return 'また会えてうれしいな！\nいつでも待ってるからね';
+    return 'ひさしぶり！\nまた気が向いたら遊びに来てね';
+  }, [sessions, designTheme]);
+
   const fetchSessions = useCallback(async () => {
     try {
       const items = await listSessionLogs();
-      // 新しい順にソート
       const sorted = items.sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
@@ -139,31 +124,29 @@ export default function TrackingScreen() {
     fetchSessions();
   }, [fetchSessions]);
 
-  /**
-   * プルダウンで更新
-   */
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchSessions();
   }, [fetchSessions]);
 
   return (
-    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* ヘッダー */}
         <View style={styles.header}>
-          <Text style={styles.title}>セッション履歴</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>セッション履歴</Text>
         </View>
 
         {/* ローディング */}
         {loading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#FF85A2" />
+            <ActivityIndicator size="large" color={colors.accent} />
           </View>
         ) : sessions.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>まだ記録がありません</Text>
-            <Text style={styles.emptyHint}>
+            <Text style={[styles.emptyText, { color: colors.textPrimary }]}>まだ記録がありません</Text>
+            <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
               セッションを始めると{'\n'}ここに履歴が表示されます
             </Text>
           </View>
@@ -175,50 +158,54 @@ export default function TrackingScreen() {
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
-                tintColor="#FF85A2"
+                tintColor={colors.accent}
               />
             }
           >
-            {/* りなわんと継続メッセージ */}
+            {/* マスコットと継続メッセージ */}
             {encouragementMessage && (
-              <View style={styles.mascotSection}>
-                <Image
-                  source={require('@/assets/images/rinawan_talking.gif')}
-                  style={styles.mascotImage}
-                  resizeMode="contain"
-                />
-                <View style={styles.speechBubbleContainer}>
-                  <View style={styles.speechBubbleTail} />
-                  <LinearGradient
-                    colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.speechBubble}
-                  >
-                    {/* キラキラ装飾 */}
-                    <Text style={[styles.sparkle, styles.sparkleTopRight]}>✧</Text>
-                    <Text style={[styles.sparkle, styles.sparkleTopLeft]}>✦</Text>
-                    <Text style={[styles.sparkle, styles.sparkleBottomRight]}>⋆</Text>
-                    <Text style={styles.speechBubbleText}>
-                      {encouragementMessage}
-                    </Text>
-                  </LinearGradient>
+              colors.showMascot ? (
+                <View style={styles.mascotSection}>
+                  <Image
+                    source={require('@/assets/images/rinawan_talking.gif')}
+                    style={styles.mascotImage}
+                    resizeMode="contain"
+                  />
+                  <View style={styles.speechBubbleContainer}>
+                    <View style={[styles.speechBubbleTail, { borderRightColor: colors.bubbleBg[0] }]} />
+                    <LinearGradient
+                      colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
+                    >
+                      <Text style={[styles.sparkle, styles.sparkleTopRight, { color: colors.sparkleColor }]}>✧</Text>
+                      <Text style={[styles.sparkle, styles.sparkleTopLeft, { color: colors.sparkleColor }]}>✦</Text>
+                      <Text style={[styles.sparkle, styles.sparkleBottomRight, { color: colors.sparkleColor }]}>⋆</Text>
+                      <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                        {encouragementMessage}
+                      </Text>
+                    </LinearGradient>
+                  </View>
                 </View>
-              </View>
+              ) : (
+                <View style={[styles.simpleMessageCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+                  <Text style={[styles.simpleMessageText, { color: colors.textSecondary }]}>
+                    {encouragementMessage}
+                  </Text>
+                </View>
+              )
             )}
 
             {sessions.map((session) => (
-              <View key={session.id} style={styles.sessionCard}>
-                {/* 補助情報：日時（右上） */}
-                <Text style={styles.sessionDate}>
+              <View key={session.id} style={[styles.sessionCard, { backgroundColor: colors.card }]}>
+                <Text style={[styles.sessionDate, { color: colors.textMuted }]}>
                   実施日時: {formatDateTime(session.timestamp)}
                 </Text>
 
-                {/* 主情報：Before → After */}
                 <View style={styles.emotionRow}>
-                  {/* Before */}
                   <View style={styles.emotionBlock}>
-                    <Text style={styles.emotionLabel}>Before</Text>
+                    <Text style={[styles.emotionLabel, { color: colors.textSecondary }]}>Before</Text>
                     <View style={styles.chipRow}>
                       <View style={[
                         styles.chip,
@@ -239,12 +226,10 @@ export default function TrackingScreen() {
                     </View>
                   </View>
 
-                  {/* 矢印 */}
-                  <Text style={styles.arrow}>→</Text>
+                  <Text style={[styles.arrow, { color: colors.textMuted }]}>→</Text>
 
-                  {/* After */}
                   <View style={[styles.emotionBlock, styles.emotionBlockRight]}>
-                    <Text style={styles.emotionLabel}>After</Text>
+                    <Text style={[styles.emotionLabel, { color: colors.textSecondary }]}>After</Text>
                     {session.afterValence !== null && session.afterValence !== undefined ? (
                       <View style={styles.chipRow}>
                         <View style={[
@@ -274,13 +259,11 @@ export default function TrackingScreen() {
                   </View>
                 </View>
 
-                {/* メモ表示 */}
                 {session.memo ? (
-                  <Text style={styles.sessionMemo}>メモ: {session.memo}</Text>
+                  <Text style={[styles.sessionMemo, { color: colors.textSecondary }]}>メモ: {session.memo}</Text>
                 ) : null}
 
-                {/* 副情報：トレーニング名・時間 */}
-                <Text style={styles.sessionMeta}>
+                <Text style={[styles.sessionMeta, { color: colors.textMuted }]}>
                   {getMenuName(session.meditationType ?? '', trainingMode)}
                 </Text>
               </View>
@@ -308,7 +291,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#4A5568',
     textAlign: 'center',
   },
   loadingContainer: {
@@ -325,12 +307,10 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#4A5568',
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 14,
-    color: '#718096',
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -365,7 +345,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
-    borderRightColor: '#FFF5F7',
     marginRight: -1,
   },
   speechBubble: {
@@ -375,18 +354,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 3,
   },
   sparkle: {
     position: 'absolute',
     fontSize: 14,
-    color: '#FF69B4',
-    textShadowColor: '#FF69B4',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 6,
   },
@@ -399,24 +375,35 @@ const styles = StyleSheet.create({
     top: 0,
     left: -10,
     fontSize: 14,
-    color: '#FF85A2',
   },
   sparkleBottomRight: {
     bottom: -6,
     right: -2,
     fontSize: 12,
-    color: '#FFB6C1',
   },
   speechBubbleText: {
     fontSize: 12,
-    color: '#5A6B7C',
     fontWeight: '600',
     lineHeight: 18,
     textAlign: 'center',
     letterSpacing: 0.2,
   },
+  simpleMessageCard: {
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    marginTop: 8,
+    marginBottom: 16,
+    marginHorizontal: 8,
+  },
+  simpleMessageText: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 20,
+    textAlign: 'center',
+  },
   sessionCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -432,7 +419,6 @@ const styles = StyleSheet.create({
     top: 12,
     right: 16,
     fontSize: 11,
-    color: '#A0AEC0',
   },
   emotionRow: {
     flexDirection: 'row',
@@ -448,7 +434,6 @@ const styles = StyleSheet.create({
   },
   emotionLabel: {
     fontSize: 11,
-    color: '#718096',
     marginBottom: 6,
   },
   chipRow: {
@@ -473,19 +458,16 @@ const styles = StyleSheet.create({
   },
   arrow: {
     fontSize: 14,
-    color: '#CBD5E0',
     marginHorizontal: 8,
     marginTop: 24,
   },
   sessionMemo: {
     marginTop: 10,
     fontSize: 12,
-    color: '#5A6B7C',
     fontStyle: 'italic',
   },
   sessionMeta: {
     marginTop: 12,
     fontSize: 11,
-    color: '#A0AEC0',
   },
 });

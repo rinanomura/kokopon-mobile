@@ -10,6 +10,7 @@ import {
   AppStateStatus,
   Animated,
   Easing,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { createSessionLog, updateSessionLog, getUserId } from '@/lib/api';
 import { getMeditationGroup, getGuideFile, MEDITATION_GUIDE_GROUPS, type MeditationGroupId } from '@/lib/meditationGuides';
+import { useThemeColors, useThemeTexts } from '@/hooks/useThemeColors';
 
 // 環境音の型
 type AmbientSoundItem = {
@@ -41,9 +43,6 @@ const FADE_DURATION = 5;
 
 /**
  * TimerScreen - タイマー画面
- *
- * 選択された時間のカウントダウンを表示し、
- * 終了時にafter画面へ遷移します。
  */
 export default function TimerScreen() {
   const params = useLocalSearchParams<{
@@ -53,6 +52,9 @@ export default function TimerScreen() {
     duration: string;
     mode: string;
   }>();
+
+  const colors = useThemeColors();
+  const texts = useThemeTexts();
 
   const mode = (params.mode ?? 'timer') as 'timer' | 'ambient' | 'guided';
   const durationMinutes = parseFloat(params.duration ?? '5');
@@ -389,9 +391,10 @@ export default function TimerScreen() {
 
   return (
     <LinearGradient
-      colors={['#7AD7F0', '#CDECF6']}
+      colors={[colors.gradientStart, colors.gradientEnd]}
       style={styles.gradient}
     >
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
 
         {/* モード表示（環境音/瞑想ガイドの場合） */}
@@ -400,42 +403,49 @@ export default function TimerScreen() {
             <Ionicons
               name={mode === 'ambient' ? 'leaf-outline' : 'headset-outline'}
               size={16}
-              color="#718096"
+              color={colors.textSecondary}
             />
-            <Text style={styles.modeIndicatorText}>{getModeLabel()}</Text>
+            <Text style={[styles.modeIndicatorText, { color: colors.textSecondary }]}>{getModeLabel()}</Text>
           </View>
         )}
 
         {/* タイマー表示 */}
         <View style={styles.timerSection}>
-          <View style={styles.timerCircle}>
+          <View style={[styles.timerCircle, { backgroundColor: colors.timerCircleBg, shadowColor: colors.accent }]}>
             {/* プログレスリング */}
-            <View style={styles.progressRing}>
+            <View style={[styles.progressRing, { borderColor: colors.progressRingBg }]}>
               <View
                 style={[
                   styles.progressFill,
+                  { borderColor: colors.progressRingFill, borderLeftColor: 'transparent', borderBottomColor: 'transparent' },
                   { transform: [{ rotate: `${progress * 360}deg` }] },
                 ]}
               />
             </View>
-            <Text style={styles.timerText}>{formatTime(remainingSeconds)}</Text>
+            <Text style={[styles.timerText, { color: colors.textPrimary }]}>{formatTime(remainingSeconds)}</Text>
           </View>
         </View>
 
-        {/* りなわん */}
+        {/* マスコット / 完了メッセージ */}
         <View style={styles.mascotSection}>
           {!isComplete ? (
-            <>
-              <Image
-                source={require('@/assets/images/rinawan_breathing.gif')}
-                style={styles.mascotImage}
-                resizeMode="contain"
-              />
-              <Text style={styles.breathingHint}>
-                りなわんと一緒に{'\n'}ゆっくり呼吸してみよう
+            colors.showMascot ? (
+              <>
+                <Image
+                  source={require('@/assets/images/rinawan_breathing.gif')}
+                  style={styles.mascotImage}
+                  resizeMode="contain"
+                />
+                <Text style={[styles.breathingHint, { color: colors.textSecondary }]}>
+                  {texts.breathingHint}
+                </Text>
+              </>
+            ) : (
+              <Text style={[styles.breathingHint, { color: colors.textSecondary }]}>
+                {texts.breathingHint}
               </Text>
-            </>
-          ) : (
+            )
+          ) : colors.showMascot ? (
             <View style={styles.completeMascotRow}>
               <Image
                 source={require('@/assets/images/rinawan_breathing.gif')}
@@ -455,28 +465,32 @@ export default function TimerScreen() {
                   },
                 ]}
               >
-                <View style={styles.speechBubbleTail} />
+                <View style={[styles.speechBubbleTail, { borderRightColor: colors.bubbleBg[0] }]} />
                 <LinearGradient
-                  colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
+                  colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
-                  style={styles.speechBubble}
+                  style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
                 >
-                  <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim }]}>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim, color: colors.sparkleColor }]}>
                     ✧
                   </Animated.Text>
-                  <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim }]}>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim, color: colors.sparkleColor }]}>
                     ✦
                   </Animated.Text>
-                  <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim }]}>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim, color: colors.sparkleColor }]}>
                     ⋆
                   </Animated.Text>
-                  <Text style={styles.speechBubbleText}>
-                    おつかれさま！
+                  <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                    {texts.completionMessage}
                   </Text>
                 </LinearGradient>
               </Animated.View>
             </View>
+          ) : (
+            <Text style={[styles.completionText, { color: colors.accent }]}>
+              {texts.completionMessage}
+            </Text>
           )}
         </View>
 
@@ -484,21 +498,21 @@ export default function TimerScreen() {
         {!isComplete && (
           <View style={styles.controlsSection}>
             <TouchableOpacity
-              style={styles.cancelButton}
+              style={[styles.cancelButton, { backgroundColor: colors.card }]}
               onPress={handleCancel}
               activeOpacity={0.7}
             >
-              <Ionicons name="close" size={24} color="#718096" />
-              <Text style={styles.cancelButtonText}>やめる</Text>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+              <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>やめる</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.pauseButton}
+              style={[styles.pauseButton, { shadowColor: colors.buttonShadow }]}
               onPress={handlePause}
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={isPaused ? ['#5ABFB0', '#7AD7F0'] : ['#FF85A2', '#FFB6C1']}
+                colors={isPaused ? ['#5ABFB0', '#7AD7F0'] : [colors.buttonGradientStart, colors.buttonGradientEnd]}
                 style={styles.pauseButtonGradient}
               >
                 <Ionicons
@@ -535,7 +549,6 @@ const styles = StyleSheet.create({
   },
   modeIndicatorText: {
     fontSize: 14,
-    color: '#718096',
     fontWeight: '500',
   },
 
@@ -549,10 +562,8 @@ const styles = StyleSheet.create({
     width: 200,
     height: 200,
     borderRadius: 100,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#FF85A2',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
@@ -564,7 +575,6 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 100,
     borderWidth: 4,
-    borderColor: 'rgba(255, 182, 193, 0.3)',
   },
   progressFill: {
     position: 'absolute',
@@ -572,18 +582,14 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 100,
     borderWidth: 4,
-    borderColor: '#FF85A2',
-    borderLeftColor: 'transparent',
-    borderBottomColor: 'transparent',
   },
   timerText: {
     fontSize: 48,
     fontWeight: '300',
-    color: '#4A5568',
     fontVariant: ['tabular-nums'],
   },
 
-  // りなわん
+  // マスコット
   mascotSection: {
     flex: 1,
     alignItems: 'center',
@@ -596,7 +602,6 @@ const styles = StyleSheet.create({
   breathingHint: {
     marginTop: 16,
     fontSize: 14,
-    color: '#718096',
     textAlign: 'center',
     lineHeight: 22,
   },
@@ -608,6 +613,11 @@ const styles = StyleSheet.create({
   mascotImageSmall: {
     width: 90,
     height: 90,
+  },
+  completionText: {
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   speechBubbleContainer: {
     flexDirection: 'row',
@@ -622,7 +632,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
-    borderRightColor: '#FFF5F7',
     marginRight: -1,
   },
   speechBubble: {
@@ -630,10 +639,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 3,
     position: 'relative',
@@ -641,8 +649,6 @@ const styles = StyleSheet.create({
   sparkle: {
     position: 'absolute',
     fontSize: 12,
-    color: '#FF69B4',
-    textShadowColor: '#FF69B4',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 4,
   },
@@ -660,7 +666,6 @@ const styles = StyleSheet.create({
   },
   speechBubbleText: {
     fontSize: 14,
-    color: '#5A6B7C',
     fontWeight: '600',
     lineHeight: 20,
     textAlign: 'center',
@@ -680,17 +685,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
     gap: 4,
   },
   cancelButtonText: {
     fontSize: 14,
-    color: '#718096',
     fontWeight: '500',
   },
   pauseButton: {
     borderRadius: 35,
-    shadowColor: '#FF85A2',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,

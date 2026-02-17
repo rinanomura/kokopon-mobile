@@ -10,6 +10,7 @@ import {
   Easing,
   ScrollView,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +18,8 @@ import { router } from 'expo-router';
 import { useFootprints } from '@/hooks/useFootprints';
 import TextButtonSelector from '@/components/TextButtonSelector';
 import { generateMindfulComment } from '@/lib/openRouter';
+import { useThemeColors, useThemeTexts } from '@/hooks/useThemeColors';
+import { usePreferences } from '@/hooks/usePreferences';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -33,13 +36,16 @@ const MIND_OPTIONS = [
 ];
 
 const REACTIVITY_OPTIONS = [
-  { value: 1, label: '敏感だが\nすぐに安定' },
-  { value: 2, label: '敏感な\n状態が続く' },
-  { value: 3, label: '常に安定' },
+  { value: 1, label: '揺れて\n戻らない' },
+  { value: 2, label: '揺れて\n戻る' },
+  { value: 3, label: '安定\nしている' },
 ];
 
 export default function HomeScreen() {
   const { addFootprint } = useFootprints();
+  const { designTheme } = usePreferences();
+  const colors = useThemeColors();
+  const texts = useThemeTexts();
 
   // 3つの選択値 (1-3)、初期値は未選択(0)
   const [bodyValue, setBodyValue] = useState(0);
@@ -115,6 +121,7 @@ export default function HomeScreen() {
           body,
           mind,
           reactivity,
+          designTheme,
         });
         setAiComment(comment);
       } catch (error) {
@@ -123,7 +130,7 @@ export default function HomeScreen() {
         setIsLoadingComment(false);
       }
     }, 2000);
-  }, []);
+  }, [designTheme]);
 
   const handleBodyChange = useCallback((v: number) => {
     setBodyValue(v);
@@ -155,21 +162,26 @@ export default function HomeScreen() {
 
   return (
     <LinearGradient
-      colors={['#7AD7F0', '#CDECF6']}
+      colors={[colors.gradientStart, colors.gradientEnd]}
       style={styles.gradient}
     >
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* タイトル */}
         <View style={styles.titleWrapper}>
           <LinearGradient
-            colors={['rgba(255,240,245,0.95)', 'rgba(255,255,255,0.95)', 'rgba(255,240,245,0.95)']}
+            colors={colors.titleBg as unknown as [string, string, ...string[]]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={styles.titleContainer}
+            style={[styles.titleContainer, { borderColor: colors.titleBorder }]}
           >
-            <Text style={styles.titleDecorLeft}>✧ ⋆</Text>
-            <Text style={styles.title}>今の状態を教えてね！</Text>
-            <Text style={styles.titleDecorRight}>⋆ ✧</Text>
+            {colors.showMascot && (
+              <Text style={[styles.titleDecorLeft, { color: colors.titleDecor }]}>✧ ⋆</Text>
+            )}
+            <Text style={[styles.title, { color: colors.textPrimary }]}>{texts.homeTitle}</Text>
+            {colors.showMascot && (
+              <Text style={[styles.titleDecorRight, { color: colors.titleDecor }]}>⋆ ✧</Text>
+            )}
           </LinearGradient>
         </View>
 
@@ -180,7 +192,7 @@ export default function HomeScreen() {
         >
           {/* セレクターセクション */}
           <View style={styles.selectorsContainer}>
-            <View style={styles.selectorCard}>
+            <View style={[styles.selectorCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               <TextButtonSelector
                 label="からだ"
                 options={BODY_OPTIONS}
@@ -188,7 +200,7 @@ export default function HomeScreen() {
                 onValueChange={handleBodyChange}
               />
             </View>
-            <View style={styles.selectorCard}>
+            <View style={[styles.selectorCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               <TextButtonSelector
                 label="こころ"
                 options={MIND_OPTIONS}
@@ -196,7 +208,7 @@ export default function HomeScreen() {
                 onValueChange={handleMindChange}
               />
             </View>
-            <View style={styles.selectorCard}>
+            <View style={[styles.selectorCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               <TextButtonSelector
                 label="心の反応しやすさ"
                 options={REACTIVITY_OPTIONS}
@@ -206,54 +218,70 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* りなわんと吹き出し */}
-          <View style={styles.mascotSection}>
-            <View style={styles.mascotWrapper}>
-              <Image
-                source={require('@/assets/images/rinawan_tilting_head.gif')}
-                style={styles.mascotImage}
-                resizeMode="contain"
-              />
-            </View>
-            <Animated.View
-              style={[
-                styles.speechBubbleContainer,
-                {
-                  transform: [{
-                    translateY: bubbleAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, -4],
-                    }),
-                  }],
-                },
-              ]}
-            >
-              <View style={styles.speechBubbleTail} />
-              <LinearGradient
-                colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.speechBubble}
+          {/* マスコット / AIコメント */}
+          {colors.showMascot ? (
+            /* りなわんと吹き出し */
+            <View style={styles.mascotSection}>
+              <View style={styles.mascotWrapper}>
+                <Image
+                  source={require('@/assets/images/rinawan_tilting_head.gif')}
+                  style={styles.mascotImage}
+                  resizeMode="contain"
+                />
+              </View>
+              <Animated.View
+                style={[
+                  styles.speechBubbleContainer,
+                  {
+                    transform: [{
+                      translateY: bubbleAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -4],
+                      }),
+                    }],
+                  },
+                ]}
               >
-                <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim }]}>
-                  ✧
-                </Animated.Text>
-                <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim }]}>
-                  ✦
-                </Animated.Text>
-                <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim }]}>
-                  ⋆
-                </Animated.Text>
+                <View style={[styles.speechBubbleTail, { borderRightColor: colors.bubbleBg[0] }]} />
+                <LinearGradient
+                  colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
+                >
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopRight, { opacity: sparkle1Anim, color: colors.sparkleColor }]}>
+                    ✧
+                  </Animated.Text>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleTopLeft, { opacity: sparkle2Anim, color: colors.sparkleColor }]}>
+                    ✦
+                  </Animated.Text>
+                  <Animated.Text style={[styles.sparkle, styles.sparkleBottomRight, { opacity: sparkle3Anim, color: colors.sparkleColor }]}>
+                    ⋆
+                  </Animated.Text>
+                  {isLoadingComment ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                      {aiComment || texts.homeBubbleDefault}
+                    </Text>
+                  )}
+                </LinearGradient>
+              </Animated.View>
+            </View>
+          ) : (
+            /* シンプルモード: AIコメントカード */
+            <View style={styles.simpleCommentSection}>
+              <View style={[styles.simpleCommentCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
                 {isLoadingComment ? (
-                  <ActivityIndicator size="small" color="#FF85A2" />
+                  <ActivityIndicator size="small" color={colors.accent} />
                 ) : (
-                  <Text style={styles.speechBubbleText}>
-                    {aiComment || '準備ができたら\n始めよう！'}
+                  <Text style={[styles.simpleCommentText, { color: colors.textSecondary }]}>
+                    {aiComment || texts.homeBubbleDefault}
                   </Text>
                 )}
-              </LinearGradient>
-            </Animated.View>
-          </View>
+              </View>
+            </View>
+          )}
         </ScrollView>
 
         {/* フッター */}
@@ -261,10 +289,10 @@ export default function HomeScreen() {
           <TouchableOpacity
             onPress={handleProceed}
             activeOpacity={0.8}
-            style={styles.proceedButtonWrapper}
+            style={[styles.proceedButtonWrapper, { shadowColor: colors.buttonShadow }]}
           >
             <LinearGradient
-              colors={['#FF85A2', '#FFB6C1']}
+              colors={[colors.buttonGradientStart, colors.buttonGradientEnd]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.proceedButton}
@@ -301,28 +329,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#4A5568',
     textAlign: 'center',
     marginHorizontal: 4,
   },
   titleDecorLeft: {
     fontSize: 14,
-    color: '#FF85A2',
     marginRight: 4,
   },
   titleDecorRight: {
     fontSize: 14,
-    color: '#FF85A2',
     marginLeft: 4,
   },
   scrollView: {
@@ -340,12 +364,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   selectorCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.55)',
     borderRadius: 16,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.3)',
   },
 
   // りなわん + 吹き出し
@@ -377,7 +399,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
-    borderRightColor: '#FFF5F7',
     marginRight: -1,
   },
   speechBubble: {
@@ -385,10 +406,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 3,
     position: 'relative',
@@ -397,8 +417,6 @@ const styles = StyleSheet.create({
   sparkle: {
     position: 'absolute',
     fontSize: 12,
-    color: '#FF69B4',
-    textShadowColor: '#FF69B4',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 4,
   },
@@ -416,9 +434,27 @@ const styles = StyleSheet.create({
   },
   speechBubbleText: {
     fontSize: 13,
-    color: '#5A6B7C',
     fontWeight: '600',
     lineHeight: 20,
+    textAlign: 'center',
+  },
+
+  // シンプルモードのAIコメント
+  simpleCommentSection: {
+    paddingTop: 24,
+    paddingHorizontal: 8,
+  },
+  simpleCommentCard: {
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  simpleCommentText: {
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 22,
     textAlign: 'center',
   },
 
@@ -431,7 +467,6 @@ const styles = StyleSheet.create({
   },
   proceedButtonWrapper: {
     borderRadius: 25,
-    shadowColor: '#FF85A2',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useThemeColors } from '@/hooks/useThemeColors';
 
 export interface TextButtonOption {
   value: number;
@@ -19,9 +20,11 @@ export default function TextButtonSelector({
   value,
   onValueChange,
 }: TextButtonSelectorProps) {
+  const colors = useThemeColors();
+
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, { color: colors.textPrimary }]}>{label}</Text>
       <View style={styles.buttonsRow}>
         {options.map((option) => {
           const isSelected = value === option.value;
@@ -30,7 +33,15 @@ export default function TextButtonSelector({
               key={option.value}
               style={[
                 styles.button,
-                isSelected && styles.buttonSelected,
+                {
+                  backgroundColor: colors.selectorBg,
+                  borderColor: colors.selectorBorder,
+                },
+                isSelected && {
+                  backgroundColor: colors.selectorSelectedBg,
+                  borderColor: colors.selectorSelectedBorder,
+                  shadowColor: colors.accent,
+                },
               ]}
               onPress={() => onValueChange(option.value)}
               activeOpacity={0.7}
@@ -38,7 +49,8 @@ export default function TextButtonSelector({
               <Text
                 style={[
                   styles.buttonText,
-                  isSelected && styles.buttonTextSelected,
+                  { color: colors.textSecondary },
+                  isSelected && { color: colors.selectorSelectedText },
                 ]}
               >
                 {option.label}
@@ -58,7 +70,6 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#4A5568',
     marginBottom: 8,
     textAlign: 'center',
   },
@@ -71,28 +82,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 4,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     borderWidth: 2,
-    borderColor: 'rgba(255, 182, 193, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  buttonSelected: {
-    backgroundColor: '#FF85A2',
-    borderColor: '#FF85A2',
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
   },
   buttonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#718096',
     textAlign: 'center',
-  },
-  buttonTextSelected: {
-    color: '#FFFFFF',
   },
 });

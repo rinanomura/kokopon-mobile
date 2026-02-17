@@ -11,6 +11,7 @@ import {
   Animated,
   Easing,
   Vibration,
+  StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +19,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Audio } from 'expo-av';
 import { generateAfterComment } from '@/lib/openRouter';
 import { listSessionLogs, SessionLog } from '@/lib/api';
+import { useThemeColors, useThemeTexts } from '@/hooks/useThemeColors';
+import { usePreferences } from '@/hooks/usePreferences';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -27,6 +30,14 @@ const FALLBACK_MESSAGES = [
   'おつかれさま！\nどんな感覚でも、気づけたことがすばらしいよ。',
   'ありがとう！\n今の自分に気づけたね。',
   'がんばったね！\nゆっくり休んでね。',
+];
+
+const FALLBACK_MESSAGES_SIMPLE = [
+  'おつかれさまでした。\n今日もご自身と向き合う時間を取れましたね。',
+  'すばらしいですね。\nまた気が向いたらいつでもどうぞ。',
+  'おつかれさまでした。\nどんな感覚でも、気づけたことが大切です。',
+  'ありがとうございます。\n今の自分に気づけましたね。',
+  'よくがんばりましたね。\nゆっくりお休みください。',
 ];
 
 // ジャーニーマップの統計データ
@@ -115,6 +126,10 @@ export default function AfterScreen() {
     meditationGuideId: string;
   }>();
 
+  const colors = useThemeColors();
+  const texts = useThemeTexts();
+  const { designTheme } = usePreferences();
+
   const [mascotMessage, setMascotMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [journeyStats, setJourneyStats] = useState<JourneyStats | null>(null);
@@ -133,11 +148,13 @@ export default function AfterScreen() {
           mind: parseFloat(params.mindValue ?? '3'),
           reactivity: parseFloat(params.reactivityValue ?? '3'),
           meditationGuideId: params.meditationGuideId ?? '',
+          designTheme,
         });
         setMascotMessage(comment);
       } catch {
+        const fallbacks = designTheme === 'simple' ? FALLBACK_MESSAGES_SIMPLE : FALLBACK_MESSAGES;
         setMascotMessage(
-          FALLBACK_MESSAGES[Math.floor(Math.random() * FALLBACK_MESSAGES.length)]
+          fallbacks[Math.floor(Math.random() * fallbacks.length)]
         );
       } finally {
         setLoading(false);
@@ -155,7 +172,7 @@ export default function AfterScreen() {
 
     fetchComment();
     fetchJourney();
-  }, [params.bodyValue, params.mindValue, params.reactivityValue, params.meditationGuideId]);
+  }, [params.bodyValue, params.mindValue, params.reactivityValue, params.meditationGuideId, designTheme]);
 
   // コメント表示完了後、ジャーニーマップをアニメーション表示
   useEffect(() => {
@@ -217,7 +234,8 @@ export default function AfterScreen() {
   };
 
   return (
-    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
+      <StatusBar barStyle={colors.statusBarStyle} />
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <ScrollView
           ref={scrollViewRef}
@@ -225,41 +243,57 @@ export default function AfterScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* りなわん + 吹き出し */}
+          {/* コメント + マスコット */}
           <View style={styles.mascotArea}>
-            {/* 吹き出し */}
+            {/* 吹き出し / コメントカード */}
             <View style={styles.speechBubbleContainer}>
-              <LinearGradient
-                colors={['#FFF5F7', '#FFFFFF', '#FFF0F5']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.speechBubble}
-              >
-                <View style={styles.sparkleTopLeft}>
-                  <Text style={styles.sparkleText}>✧</Text>
+              {colors.showMascot ? (
+                <LinearGradient
+                  colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
+                >
+                  <View style={styles.sparkleTopLeft}>
+                    <Text style={[styles.sparkleText, { color: colors.sparkleColor }]}>✧</Text>
+                  </View>
+                  <View style={styles.sparkleBottomRight}>
+                    <Text style={[styles.sparkleText, { color: colors.sparkleColor }]}>✧</Text>
+                  </View>
+                  {loading ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                      {mascotMessage}
+                    </Text>
+                  )}
+                </LinearGradient>
+              ) : (
+                <View style={[styles.simpleCommentCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+                  {loading ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                      {mascotMessage}
+                    </Text>
+                  )}
                 </View>
-                <View style={styles.sparkleBottomRight}>
-                  <Text style={styles.sparkleText}>✧</Text>
+              )}
+              {colors.showMascot && (
+                <View style={styles.speechBubbleTailOuter}>
+                  <View style={[styles.speechBubbleTail, { borderTopColor: colors.bubbleBg[2] }]} />
                 </View>
-                {loading ? (
-                  <ActivityIndicator size="small" color="#FF85A2" />
-                ) : (
-                  <Text style={styles.speechBubbleText}>
-                    {mascotMessage}
-                  </Text>
-                )}
-              </LinearGradient>
-              <View style={styles.speechBubbleTailOuter}>
-                <View style={styles.speechBubbleTail} />
-              </View>
+              )}
             </View>
 
-            {/* りなわん GIF */}
-            <Image
-              source={require('@/assets/images/rinawan_laying_down.gif')}
-              style={styles.mascotImage}
-              resizeMode="contain"
-            />
+            {/* りなわん GIF（かわいいモードのみ） */}
+            {colors.showMascot && (
+              <Image
+                source={require('@/assets/images/rinawan_laying_down.gif')}
+                style={styles.mascotImage}
+                resizeMode="contain"
+              />
+            )}
           </View>
 
           {/* ジャーニーマップ（遅延アニメーション表示） */}
@@ -270,40 +304,43 @@ export default function AfterScreen() {
                 {
                   opacity: journeyOpacity,
                   transform: [{ translateY: journeyTranslateY }],
+                  shadowColor: colors.bubbleShadow,
                 },
               ]}
             >
               <LinearGradient
-                colors={['rgba(255,255,255,0.95)', 'rgba(255,240,245,0.9)']}
-                style={styles.journeyGradient}
+                colors={colors.journeyGradient as unknown as [string, string, ...string[]]}
+                style={[styles.journeyGradient, { borderColor: colors.journeyBorder }]}
               >
                 {/* ストリークヘッダー */}
                 <View style={styles.journeyHeader}>
                   <Text style={styles.journeyStreakEmoji}>
                     {journeyStats.streak >= 7 ? '🏆' : journeyStats.streak >= 3 ? '🔥' : '✨'}
                   </Text>
-                  <Text style={styles.journeyStreakText}>
+                  <Text style={[styles.journeyStreakText, { color: colors.textPrimary }]}>
                     {getStreakMessage(journeyStats.streak)}
                   </Text>
                 </View>
 
                 {/* ドットタイムライン */}
                 <View style={styles.timelineContainer}>
-                  <View style={styles.timelineLine} />
+                  <View style={[styles.timelineLine, { backgroundColor: colors.journeyLine }]} />
                   <View style={styles.timelineDots}>
                     {journeyStats.recentDays.map((day) => (
                       <View key={day.date} style={styles.timelineDayColumn}>
                         <View
                           style={[
                             styles.timelineDot,
-                            day.hasSession && styles.timelineDotActive,
-                            day.isToday && styles.timelineDotToday,
+                            { backgroundColor: colors.journeyDotInactive, borderColor: colors.journeyDotInactive },
+                            day.hasSession && { backgroundColor: colors.journeyDotActive, borderColor: colors.journeyDotActive },
+                            day.isToday && { backgroundColor: colors.journeyDotToday, borderColor: colors.journeyDotToday, shadowColor: colors.journeyDotToday },
                           ]}
                         />
                         <Text
                           style={[
                             styles.timelineDateLabel,
-                            day.isToday && styles.timelineDateLabelToday,
+                            { color: colors.textMuted },
+                            day.isToday && { color: colors.accent, fontWeight: '700' },
                           ]}
                         >
                           {day.isToday ? '今日' : day.label}
@@ -316,17 +353,17 @@ export default function AfterScreen() {
                 {/* 累計統計 */}
                 <View style={styles.statsRow}>
                   <View style={styles.statItem}>
-                    <Text style={styles.statValue}>
+                    <Text style={[styles.statValue, { color: colors.statValueColor }]}>
                       {formatTotalTime(journeyStats.totalMinutes)}
                     </Text>
-                    <Text style={styles.statLabel}>累計瞑想時間</Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>累計瞑想時間</Text>
                   </View>
-                  <View style={styles.statDivider} />
+                  <View style={[styles.statDivider, { backgroundColor: colors.journeyLine }]} />
                   <View style={styles.statItem}>
-                    <Text style={styles.statValue}>
+                    <Text style={[styles.statValue, { color: colors.statValueColor }]}>
                       {journeyStats.totalSessions}回
                     </Text>
-                    <Text style={styles.statLabel}>トレーニング回数</Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>トレーニング回数</Text>
                   </View>
                 </View>
               </LinearGradient>
@@ -339,10 +376,10 @@ export default function AfterScreen() {
           <TouchableOpacity
             onPress={handleGoHome}
             activeOpacity={0.8}
-            style={styles.buttonWrapper}
+            style={[styles.buttonWrapper, { shadowColor: colors.buttonShadow }]}
           >
             <LinearGradient
-              colors={['#FF85A2', '#FFB6C1']}
+              colors={[colors.buttonGradientStart, colors.buttonGradientEnd]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.button}
@@ -376,7 +413,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
 
-  // りなわん + 吹き出し
+  // マスコット + 吹き出し
   mascotArea: {
     alignItems: 'center',
     marginBottom: 24,
@@ -390,13 +427,18 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     paddingHorizontal: 28,
     borderWidth: 2,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 5,
     position: 'relative',
+  },
+  simpleCommentCard: {
+    borderRadius: 24,
+    paddingVertical: 20,
+    paddingHorizontal: 28,
+    borderWidth: 1,
   },
   sparkleTopLeft: {
     position: 'absolute',
@@ -410,11 +452,9 @@ const styles = StyleSheet.create({
   },
   sparkleText: {
     fontSize: 16,
-    color: '#FFB6C1',
   },
   speechBubbleText: {
     fontSize: 15,
-    color: '#5A6B7C',
     textAlign: 'center',
     lineHeight: 26,
     fontWeight: '600',
@@ -432,7 +472,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 14,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
-    borderTopColor: '#FFF0F5',
   },
   mascotImage: {
     width: SCREEN_WIDTH * 0.35,
@@ -445,7 +484,6 @@ const styles = StyleSheet.create({
   journeyCard: {
     borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#FFB6C1',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
@@ -454,7 +492,6 @@ const styles = StyleSheet.create({
   journeyGradient: {
     borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.4)',
     paddingVertical: 20,
     paddingHorizontal: 20,
   },
@@ -473,7 +510,6 @@ const styles = StyleSheet.create({
   journeyStreakText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#4A5568',
   },
 
   // タイムライン
@@ -489,7 +525,6 @@ const styles = StyleSheet.create({
     top: DOT_SIZE / 2,
     height: 3,
     borderRadius: 1.5,
-    backgroundColor: 'rgba(255, 182, 193, 0.3)',
   },
   timelineDots: {
     flexDirection: 'row',
@@ -503,31 +538,11 @@ const styles = StyleSheet.create({
     width: DOT_SIZE,
     height: DOT_SIZE,
     borderRadius: DOT_SIZE / 2,
-    backgroundColor: 'rgba(255, 182, 193, 0.3)',
     borderWidth: 2,
-    borderColor: 'rgba(255, 182, 193, 0.4)',
     marginBottom: 6,
-  },
-  timelineDotActive: {
-    backgroundColor: '#FF85A2',
-    borderColor: '#FF85A2',
-  },
-  timelineDotToday: {
-    backgroundColor: '#FF85A2',
-    borderColor: '#FF6B8A',
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 3,
   },
   timelineDateLabel: {
     fontSize: 10,
-    color: '#A0AEC0',
-  },
-  timelineDateLabelToday: {
-    color: '#FF85A2',
-    fontWeight: '700',
   },
 
   // 累計統計
@@ -543,17 +558,14 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FF85A2',
     marginBottom: 2,
   },
   statLabel: {
     fontSize: 11,
-    color: '#718096',
   },
   statDivider: {
     width: 1,
     height: 32,
-    backgroundColor: 'rgba(255, 182, 193, 0.3)',
   },
 
   // フッター
@@ -565,7 +577,6 @@ const styles = StyleSheet.create({
   },
   buttonWrapper: {
     borderRadius: 25,
-    shadowColor: '#FF85A2',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
