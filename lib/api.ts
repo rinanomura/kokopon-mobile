@@ -113,12 +113,12 @@ export const createSessionLogMutation = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeValence
-      beforeArousal
-      afterValence
-      afterArousal
+      beforeMentalCondition
+      afterMentalCondition
       meditationType
-      duration
+      settingDuration
+      actualDuration
+      meditationMode
       deleted
       createdAt
       updatedAt
@@ -134,12 +134,12 @@ export const updateSessionLogMutation = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeValence
-      beforeArousal
-      afterValence
-      afterArousal
+      beforeMentalCondition
+      afterMentalCondition
       meditationType
-      duration
+      settingDuration
+      actualDuration
+      meditationMode
       deleted
       createdAt
       updatedAt
@@ -156,12 +156,12 @@ export const listSessionLogsQuery = /* GraphQL */ `
         id
         userId
         timestamp
-        beforeValence
-        beforeArousal
-        afterValence
-        afterArousal
+        beforeMentalCondition
+        afterMentalCondition
         meditationType
-        duration
+        settingDuration
+        actualDuration
+        meditationMode
         deleted
         createdAt
         updatedAt
@@ -179,12 +179,12 @@ export const getSessionLogQuery = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeValence
-      beforeArousal
-      afterValence
-      afterArousal
+      beforeMentalCondition
+      afterMentalCondition
       meditationType
-      duration
+      settingDuration
+      actualDuration
+      meditationMode
       deleted
       createdAt
       updatedAt
@@ -411,18 +411,26 @@ export interface Person extends PersonInput {
 export interface SessionLogInput {
   userId: string;
   timestamp: string;
-  beforeValence: number;
-  beforeArousal: number;
-  afterValence?: number;
-  afterArousal?: number;
+  beforeMentalCondition: number;
+  afterMentalCondition?: number;
   meditationType?: string;
-  duration?: number;
-  memo?: string;
+  settingDuration?: number;
+  actualDuration?: number;
+  meditationMode?: string;
   deleted?: boolean;
 }
 
-export interface SessionLog extends SessionLogInput {
+export interface SessionLog {
   id: string;
+  userId: string;
+  timestamp: string;
+  beforeMentalCondition: number;
+  afterMentalCondition?: number;
+  meditationType?: string;
+  settingDuration?: number;
+  actualDuration?: number;
+  meditationMode?: string;
+  deleted?: boolean;
   createdAt: string;
   updatedAt: string;
   owner?: string;
@@ -550,24 +558,19 @@ export async function getSessionLog(id: string): Promise<SessionLog | null> {
 
 /**
  * SessionLog を更新（瞑想終了時に after を追加）
- * memo はバックエンド対応完了後に送信を有効化する
  */
 export async function updateSessionLog(
   id: string,
-  afterValence: number,
-  afterArousal: number,
-  memo?: string
+  afterMentalCondition?: number,
+  actualDuration?: number
 ): Promise<SessionLog> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const input: any = {
-    id,
-    afterValence,
-    afterArousal,
-  };
-  // TODO: バックエンド対応完了後にコメントアウトを解除
-  // if (memo) {
-  //   input.memo = memo;
-  // }
+  const input: Record<string, unknown> = { id };
+  if (afterMentalCondition !== undefined) {
+    input.afterMentalCondition = afterMentalCondition;
+  }
+  if (actualDuration !== undefined) {
+    input.actualDuration = actualDuration;
+  }
   const result = await getClient().graphql({
     query: updateSessionLogMutation,
     variables: { input },

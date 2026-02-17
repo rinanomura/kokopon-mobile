@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.nobusugahara.kokoponmobile",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {

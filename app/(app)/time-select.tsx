@@ -59,8 +59,9 @@ const MODE_OPTIONS: ModeOption[] = [
  */
 export default function TimeSelectScreen() {
   const params = useLocalSearchParams<{
-    beforeMind: string;
-    memo: string;
+    bodyValue: string;
+    mindValue: string;
+    reactivityValue: string;
   }>();
 
   const [selectedTime, setSelectedTime] = useState<number>(5);
@@ -70,8 +71,9 @@ export default function TimeSelectScreen() {
     router.push({
       pathname: '/timer',
       params: {
-        beforeMind: params.beforeMind,
-        memo: params.memo ?? '',
+        bodyValue: params.bodyValue,
+        mindValue: params.mindValue,
+        reactivityValue: params.reactivityValue,
         duration: selectedTime.toString(),
         mode: selectedMode,
       },

@@ -77,7 +77,7 @@ export function PreferencesProvider({ children }: Props) {
         if (storedGuideMode === 'timer' || storedGuideMode === 'ambient' || storedGuideMode === 'guided') {
           setGuideModeState(storedGuideMode);
         }
-        if (storedAmbientSound === 'birds' || storedAmbientSound === 'river' || storedAmbientSound === 'rain' || storedAmbientSound === 'wave' || storedAmbientSound === 'bonfire' || storedAmbientSound === 'space') {
+        if (storedAmbientSound === 'birds' || storedAmbientSound === 'river' || storedAmbientSound === 'rain' || storedAmbientSound === 'wave' || storedAmbientSound === 'bonfire' || storedAmbientSound === 'singing_bowls') {
           setAmbientSoundState(storedAmbientSound);
         }
         if (storedNotifTimes !== null) {

@@ -16,24 +16,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
-import { createSessionLog, getUserId } from '@/lib/api';
+import { createSessionLog, updateSessionLog, getUserId } from '@/lib/api';
+import { getMeditationGroup, getGuideFile, MEDITATION_GUIDE_GROUPS, type MeditationGroupId } from '@/lib/meditationGuides';
 
 // 環境音の型
 type AmbientSoundItem = {
   id: string;
   file: number;
   label: string;
-};
-
-// 瞑想ガイドの型
-type MeditationGuideItem = {
-  id: string;
-  label: string;
-  files: {
-    1: number;
-    5: number;
-    10: number;
-  };
 };
 
 // 環境音ファイル（6種類）
@@ -44,24 +34,6 @@ const AMBIENT_SOUNDS: AmbientSoundItem[] = [
   { id: 'wave', file: require('@/assets/sounds/ocean_waves.mp3'), label: '波' },
   { id: 'bonfire', file: require('@/assets/sounds/fire_crackling.mp3'), label: '焚き火' },
   { id: 'singing_bowls', file: require('@/assets/sounds/singing_bowls.mp3'), label: 'シンギングボール' },
-];
-
-// 瞑想ガイドファイル（現在1種類のみ、12種類に増える予定）
-// 時間に応じて適切なファイルを選択
-const MEDITATION_GUIDES: MeditationGuideItem[] = [
-  {
-    id: 'release_breath',
-    label: '呼吸を解放する',
-    files: {
-      1: require('@/assets/sounds/release_breath_1m_rina.m4a'),
-      5: require('@/assets/sounds/release_breath_5m_rina.m4a'),
-      10: require('@/assets/sounds/release_breath_10m_rina.m4a'),
-    },
-  },
-  // 今後追加予定の瞑想ガイド
-  // { id: 'slow_breath', label: 'ゆっくり呼吸', files: { 1: ..., 5: ..., 10: ... } },
-  // { id: 'stillness', label: '静けさを感じる', files: { 1: ..., 5: ..., 10: ... } },
-  // ...
 ];
 
 // フェードアウト開始時間（秒）- 終了の何秒前からフェードアウトするか
@@ -75,8 +47,9 @@ const FADE_DURATION = 5;
  */
 export default function TimerScreen() {
   const params = useLocalSearchParams<{
-    beforeMind: string;
-    memo: string;
+    bodyValue: string;
+    mindValue: string;
+    reactivityValue: string;
     duration: string;
     mode: string;
   }>();
@@ -106,18 +79,18 @@ export default function TimerScreen() {
     return null;
   }, [mode]);
 
-  const selectedGuide = useMemo((): MeditationGuideItem | null => {
+  const selectedGuideGroupId = useMemo((): MeditationGroupId | null => {
     if (mode === 'guided') {
-      const availableGuides = MEDITATION_GUIDES.filter(
-        (guide) => guide.files[durationMinutes as 1 | 5 | 10]
-      );
-      if (availableGuides.length > 0) {
-        const randomIndex = Math.floor(Math.random() * availableGuides.length);
-        return availableGuides[randomIndex];
-      }
+      const bodyVal = parseFloat(params.bodyValue ?? '0');
+      const mindVal = parseFloat(params.mindValue ?? '0');
+      return getMeditationGroup(bodyVal, mindVal);
     }
     return null;
-  }, [mode, durationMinutes]);
+  }, [mode, params.bodyValue, params.mindValue]);
+
+  const selectedGuideLabel = selectedGuideGroupId
+    ? MEDITATION_GUIDE_GROUPS[selectedGuideGroupId].label
+    : null;
 
   // 完了時の吹き出しアニメーション
   const bubbleAnim = useRef(new Animated.Value(0)).current;
@@ -129,7 +102,7 @@ export default function TimerScreen() {
   useEffect(() => {
     if (mode === 'timer') return;
     if (mode === 'ambient' && !selectedAmbientSound) return;
-    if (mode === 'guided' && !selectedGuide) return;
+    if (mode === 'guided' && !selectedGuideGroupId) return;
 
     const loadAndPlaySound = async () => {
       try {
@@ -142,8 +115,8 @@ export default function TimerScreen() {
         let soundFile;
         if (mode === 'ambient' && selectedAmbientSound) {
           soundFile = selectedAmbientSound.file;
-        } else if (mode === 'guided' && selectedGuide) {
-          soundFile = selectedGuide.files[durationMinutes as 1 | 5 | 10];
+        } else if (mode === 'guided' && selectedGuideGroupId) {
+          soundFile = getGuideFile(selectedGuideGroupId, durationMinutes as 1 | 5 | 10);
         }
 
         if (!soundFile) return;
@@ -152,7 +125,7 @@ export default function TimerScreen() {
           soundFile,
           {
             shouldPlay: true,
-            isLooping: mode === 'ambient', // 環境音はループ、瞑想ガイドは1回のみ
+            isLooping: mode === 'ambient',
           }
         );
         soundRef.current = sound;
@@ -172,7 +145,7 @@ export default function TimerScreen() {
         clearInterval(fadeIntervalRef.current);
       }
     };
-  }, [mode, selectedAmbientSound, selectedGuide, durationMinutes]);
+  }, [mode, selectedAmbientSound, selectedGuideGroupId, durationMinutes]);
 
   // タイマー開始時にセッションログを作成
   useEffect(() => {
@@ -183,15 +156,15 @@ export default function TimerScreen() {
       try {
         const userId = await getUserId();
         const now = new Date().toISOString();
-        const beforeMind = parseFloat(params.beforeMind ?? '0');
+        const beforeMind = parseFloat(params.mindValue ?? '0');
 
         const session = await createSessionLog({
           userId,
           timestamp: now,
-          beforeValence: 0, // からだは削除されたので0
-          beforeArousal: beforeMind,
-          meditationType: mode,
-          duration: durationMinutes * 60,
+          beforeMentalCondition: beforeMind,
+          meditationType: selectedGuideGroupId ?? mode,
+          settingDuration: durationMinutes * 60,
+          meditationMode: mode,
         });
 
         if (session?.id) {
@@ -321,6 +294,15 @@ export default function TimerScreen() {
       await soundRef.current.stopAsync();
     }
 
+    // 実績時間を記録
+    if (sessionIdRef.current) {
+      try {
+        await updateSessionLog(sessionIdRef.current, undefined, totalSeconds);
+      } catch (error) {
+        console.error('Failed to update actualDuration:', error);
+      }
+    }
+
     // 振動
     Vibration.vibrate([0, 500, 200, 500]);
 
@@ -330,11 +312,14 @@ export default function TimerScreen() {
         pathname: '/after',
         params: {
           sessionId: sessionIdRef.current ?? '',
-          beforeMind: params.beforeMind,
+          bodyValue: params.bodyValue,
+          mindValue: params.mindValue,
+          reactivityValue: params.reactivityValue,
+          meditationGuideId: selectedGuideGroupId ?? mode,
         },
       });
     }, 1500);
-  }, [params.beforeMind]);
+  }, [params.bodyValue, params.mindValue, params.reactivityValue, selectedGuideGroupId, mode]);
 
   const handlePause = useCallback(async () => {
     // 音声の一時停止/再開
@@ -356,8 +341,29 @@ export default function TimerScreen() {
     if (soundRef.current) {
       await soundRef.current.stopAsync();
     }
-    router.back();
-  }, []);
+
+    // 実績時間を記録
+    const actualSeconds = totalSeconds - remainingSeconds;
+    if (sessionIdRef.current && actualSeconds > 0) {
+      try {
+        await updateSessionLog(sessionIdRef.current, undefined, actualSeconds);
+      } catch (error) {
+        console.error('Failed to update actualDuration:', error);
+      }
+    }
+
+    // after画面へ遷移
+    router.replace({
+      pathname: '/after',
+      params: {
+        sessionId: sessionIdRef.current ?? '',
+        bodyValue: params.bodyValue,
+        mindValue: params.mindValue,
+        reactivityValue: params.reactivityValue,
+        meditationGuideId: selectedGuideGroupId ?? mode,
+      },
+    });
+  }, [totalSeconds, remainingSeconds, params.bodyValue, params.mindValue, params.reactivityValue, selectedGuideGroupId, mode]);
 
   // 時間表示フォーマット
   const formatTime = (seconds: number): string => {
@@ -375,7 +381,7 @@ export default function TimerScreen() {
       case 'ambient':
         return selectedAmbientSound ? selectedAmbientSound.label : '環境音';
       case 'guided':
-        return '瞑想ガイド';
+        return selectedGuideLabel ?? '瞑想ガイド';
       default:
         return '';
     }

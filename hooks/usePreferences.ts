@@ -5,7 +5,7 @@ import { PreferencesContext } from '@/components/PreferencesProvider';
 export type TrainingMode = 'intuitive' | 'verbal';
 export type VoiceType = 'rina' | 'rinawan';
 export type GuideMode = 'timer' | 'ambient' | 'guided';
-export type AmbientSound = 'birds' | 'river' | 'rain' | 'wave' | 'bonfire' | 'space';
+export type AmbientSound = 'birds' | 'river' | 'rain' | 'wave' | 'bonfire' | 'singing_bowls';
 
 // 通知時刻の型（lib/notifications.tsと同じ）
 export type NotificationTime = {

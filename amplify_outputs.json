@@ -58,29 +58,15 @@
               "isRequired": true,
               "attributes": []
             },
-            "beforeValence": {
-              "name": "beforeValence",
+            "beforeMentalCondition": {
+              "name": "beforeMentalCondition",
               "isArray": false,
               "type": "Float",
               "isRequired": true,
               "attributes": []
             },
-            "beforeArousal": {
-              "name": "beforeArousal",
-              "isArray": false,
-              "type": "Float",
-              "isRequired": true,
-              "attributes": []
-            },
-            "afterValence": {
-              "name": "afterValence",
-              "isArray": false,
-              "type": "Float",
-              "isRequired": false,
-              "attributes": []
-            },
-            "afterArousal": {
-              "name": "afterArousal",
+            "afterMentalCondition": {
+              "name": "afterMentalCondition",
               "isArray": false,
               "type": "Float",
               "isRequired": false,
@@ -93,10 +79,24 @@
               "isRequired": false,
               "attributes": []
             },
-            "duration": {
-              "name": "duration",
+            "settingDuration": {
+              "name": "settingDuration",
               "isArray": false,
               "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "actualDuration": {
+              "name": "actualDuration",
+              "isArray": false,
+              "type": "Int",
+              "isRequired": false,
+              "attributes": []
+            },
+            "meditationMode": {
+              "name": "meditationMode",
+              "isArray": false,
+              "type": "String",
               "isRequired": false,
               "attributes": []
             },
@@ -130,6 +130,16 @@
             {
               "type": "model",
               "properties": {}
+            },
+            {
+              "type": "key",
+              "properties": {
+                "name": "sessionLogsByUserId",
+                "queryField": "listSessionLogsByUserId",
+                "fields": [
+                  "userId"
+                ]
+              }
             },
             {
               "type": "auth",

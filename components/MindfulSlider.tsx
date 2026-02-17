@@ -32,6 +32,8 @@ export default function MindfulSlider({
   const currentValue = useRef(value);
   currentValue.current = value;
   const gestureStartValue = useRef(0);
+  const hasMoved = useRef(false);
+  const tapLocationX = useRef(0);
 
   const onTrackLayout = useCallback((e: LayoutChangeEvent) => {
     trackWidth.current = e.nativeEvent.layout.width;
@@ -43,19 +45,28 @@ export default function MindfulSlider({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        // ドラッグ開始時の値を記録（タップ時はジャンプしない）
+      onPanResponderGrant: (evt) => {
         gestureStartValue.current = currentValue.current;
+        hasMoved.current = false;
+        tapLocationX.current = evt.nativeEvent.locationX;
       },
       onPanResponderMove: (evt, gestureState) => {
         if (trackWidth.current === 0) return;
-        // dx をトラック幅に対する割合に変換し、感度係数を適用
+        if (Math.abs(gestureState.dx) > 3) {
+          hasMoved.current = true;
+        }
         const sensitivity = 0.5;
         const deltaValue = (gestureState.dx / trackWidth.current) * 2 * sensitivity;
         const newValue = clampValue(gestureStartValue.current + deltaValue);
         onValueChange(Math.round(newValue * 100) / 100);
       },
-      onPanResponderRelease: () => {},
+      onPanResponderRelease: () => {
+        if (!hasMoved.current && trackWidth.current > 0) {
+          const ratio = tapLocationX.current / trackWidth.current;
+          const newValue = clampValue(ratio * 2 - 1);
+          onValueChange(Math.round(newValue * 100) / 100);
+        }
+      },
     })
   ).current;
 

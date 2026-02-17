@@ -19,7 +19,7 @@
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   ホーム    │ → │  時間選択   │ → │   タイマー  │ → │    After    │ → │    完了     │
-│ (スライダー)│    │ (1/5/10分)  │    │   (①②用)   │    │ (スライダー)│    │  (りなわん) │
+│ (スライダー)│    │(30秒/5/10分)│    │   (①②用)   │    │ (スライダー)│    │  (りなわん) │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
      │
      └── からだ/こころ/メモ入力
@@ -43,11 +43,11 @@
 ```typescript
 // 新規追加
 type GuideMode = 'timer' | 'ambient' | 'guided';
-type AmbientSound = 'forest' | 'wave' | 'rain';
+type AmbientSound = 'birds' | 'river' | 'rain' | 'wave' | 'bonfire' | 'singing_bowls';
 
 // ストレージキー
 GUIDE_MODE: 'pref_guide_mode'      // デフォルト: 'timer'
-AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
+AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'birds'
 ```
 
 ### SessionLog（既存フィールド活用）
@@ -123,10 +123,10 @@ AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
 ```
 ┌────────────────────────────────────────┐
 │                                        │
-│        時間を選んでね                   │
+│        時間を選んでね！                 │
 │                                        │
 │   ┌─────┐  ┌─────┐  ┌─────┐           │
-│   │ 1分 │  │ 5分 │  │10分 │           │
+│   │30秒 │  │ 5分 │  │10分 │           │
 │   └─────┘  └─────┘  └─────┘           │
 │                                        │
 │        [りなわん GIF]                  │
@@ -221,30 +221,30 @@ AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
 
 ## 実装順序
 
-### Phase 1-A: 基盤整備
+### Phase 1-A: 基盤整備 ✅
 
-1. `hooks/useGuideMode.ts` 作成（または usePreferences に統合）
-2. `components/PreferencesProvider.tsx` にガイドモード追加
-3. `settings.tsx` にガイドモード選択UI追加
+1. ✅ `hooks/useGuideMode.ts` 作成（または usePreferences に統合）
+2. ✅ `components/PreferencesProvider.tsx` にガイドモード追加
+3. ✅ `settings.tsx` にガイドモード選択UI追加
 
-### Phase 1-B: ホーム画面リデザイン
+### Phase 1-B: ホーム画面リデザイン ✅
 
-4. `index.tsx` をスライダーUIに全面変更
-5. SessionLog作成ロジック調整（beforeValence/Arousalをスライダー値で保存）
+4. ✅ `index.tsx` をスライダーUIに全面変更
+5. ✅ SessionLog作成ロジック調整（beforeValence/Arousalをスライダー値で保存）
 
-### Phase 1-C: 新画面作成
+### Phase 1-C: 新画面作成 ✅
 
-6. `time-select.tsx` 新規作成（時間選択）
-7. `timer.tsx` 新規作成（①②用タイマー）
+6. ✅ `time-select.tsx` 新規作成（時間選択）
+7. ✅ `timer.tsx` 新規作成（①②用タイマー）+ 環境音再生機能
 
-### Phase 1-D: 遷移接続
+### Phase 1-D: 遷移接続 ✅
 
-8. ホーム → 時間選択 → タイマー → After の流れを接続
-9. ガイドモード別の分岐処理実装
+8. ✅ ホーム → 時間選択 → タイマー → After の流れを接続
+9. ✅ ガイドモード別の分岐処理実装
 
-### Phase 1-E: 履歴画面
+### Phase 1-E: 履歴画面 ✅
 
-10. `tracking.tsx` のBefore表示を変更
+10. ✅ `tracking.tsx` のBefore表示を変更
 
 ### Phase 2（後日）
 
@@ -260,7 +260,7 @@ AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
 
 | 表示 | 値（秒） |
 |-----|---------|
-| 1分 | 60 |
+| 30秒 | 30 |
 | 5分 | 300 |
 | 10分 | 600 |
 
@@ -274,27 +274,50 @@ AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
 
 ---
 
-## 音声ファイル（Phase 2で対応）
+## 音声ファイル
 
 ### ①タイマーのみ
 
-- `timer_start.mp3` - 開始チャイム
-- `timer_end.mp3` - 終了チャイム
+- `pon.mp3` - 開始/終了チャイム（既存）
 
-### ②環境音（設定で種類を選択可能）
+### ②環境音（設定で種類を選択可能）✅ 準備完了
 
-| 種類 | ファイル（各時間版） |
-|------|---------------------|
-| 森 | `ambient_forest_{1,5,10}min.mp3` |
-| 波 | `ambient_wave_{1,5,10}min.mp3` |
-| 雨 | `ambient_rain_{1,5,10}min.mp3` |
+**方式:** 各環境音につき10分超のファイル1つを用意。30秒/5分/10分すべて同じファイルを再生し、終了時にフェードアウト。
 
-※音声ファイルは後日作成。作成まではプレースホルダー対応。
+| 種類 | ファイル名 | キー | 絵文字 |
+|------|-----------|------|--------|
+| 小鳥 | `birds.mp3` | birds | 🐦 |
+| 川 | `river.mp3` | river | 🏞️ |
+| 雨 | `rain.mp3` | rain | 🌧️ |
+| 波 | `ocean_waves.mp3` | wave | 🌊 |
+| 焚き火 | `fire_crackling.mp3` | bonfire | 🔥 |
+| シンギングボール | `singing_bowls.mp3` | singing_bowls | 🔔 |
 
-### ③瞑想ガイド
+**保存先:** `assets/sounds/`
 
-- 現行30秒音声をそのまま使用
-- 1分/5分版は後日作成
+**フェードアウト実装:**
+```typescript
+const FADE_DURATION = 3; // 3秒かけてフェードアウト
+
+// タイマー終了3秒前からフェード開始
+if (remainingSeconds <= FADE_DURATION) {
+  const volume = remainingSeconds / FADE_DURATION;
+  sound.setVolumeAsync(volume);
+}
+```
+
+### ③瞑想ガイド（Phase 2）
+
+**「呼吸を開放する」のみ準備完了:**
+
+| 時間 | ファイル名 | 状態 |
+|------|-----------|------|
+| 30秒 | `release_breath_30s_rina.m4a` | ✅ 既存 |
+| 1分 | `release_breath_1m_rina.m4a` | ✅ 新規 |
+| 5分 | `release_breath_5m_rina.m4a` | ✅ 新規 |
+| 10分 | `release_breath_10m_rina.m4a` | ✅ 新規 |
+
+**残り11種類:** 後ほど準備予定
 
 ---
 
@@ -302,11 +325,16 @@ AMBIENT_SOUND: 'pref_ambient_sound' // デフォルト: 'forest'
 
 - [x] タイマー画面のりなわん: `breathing` GIF（後日、複数GIF組み合わせに拡張予定）
 - [x] 時間選択ボタン: **カード型**（タップしやすく視認性が高い）
-- [x] 環境音: **複数種類から選択可能**（森/波/雨など）
+- [x] 環境音: **6種類から選択可能**（小鳥/川/雨/波/焚き火/シンギングボール）
+- [x] 環境音ファイル方式: **10分超ファイル1つ + フェードアウト**
 - [x] タイマー終了時: **振動 + 通知あり**
+- [x] 時間選択: **30秒/5分/10分**
 
 ### TODO（実装完了後）
 - [ ] りなわんGIF複数組み合わせ表示について相談
+- [x] 環境音ファイル6種類のアップロード ✅
+- [x] 瞑想ガイド音声（呼吸を開放する 1分/5分/10分）アップロード ✅
+- [ ] 残り11種類の瞑想ガイド音声を準備
 
 ---
 

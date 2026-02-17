@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,23 +7,21 @@ import {
   TouchableOpacity,
   Dimensions,
   ActivityIndicator,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
+  Animated,
+  Easing,
+  Vibration,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { getSessionLog, updateSessionLog, SessionLog } from '@/lib/api';
-import MindfulSlider from '@/components/MindfulSlider';
+import { Audio } from 'expo-av';
+import { generateAfterComment } from '@/lib/openRouter';
+import { listSessionLogs, SessionLog } from '@/lib/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-/**
- * マスコットメッセージ（Phase 2用）
- */
-const MASCOT_MESSAGES = [
+const FALLBACK_MESSAGES = [
   'おつかれさま！\n今日も自分と過ごす時間をつくれたね。',
   'えらいね！\nまた気が向いたら会いに来てね。',
   'おつかれさま！\nどんな感覚でも、気づけたことがすばらしいよ。',
@@ -31,141 +29,204 @@ const MASCOT_MESSAGES = [
   'がんばったね！\nゆっくり休んでね。',
 ];
 
-/**
- * AfterScreen - トレーニング後記録画面
- *
- * Phase 1: スライダー2本 + メモ入力 + 記録ボタン
- * Phase 2: りなわん吹き出し + ホームへ戻る
- */
+// ジャーニーマップの統計データ
+interface JourneyStats {
+  streak: number;
+  recentDays: { date: string; label: string; hasSession: boolean; isToday: boolean }[];
+  totalMinutes: number;
+  totalSessions: number;
+}
+
+function calcJourneyStats(sessions: SessionLog[]): JourneyStats {
+  const now = new Date();
+  const todayStr = toDateStr(now);
+
+  const sessionDates = new Set<string>();
+  let totalSeconds = 0;
+
+  for (const s of sessions) {
+    const d = toDateStr(new Date(s.timestamp));
+    sessionDates.add(d);
+    totalSeconds += s.actualDuration ?? s.settingDuration ?? 0;
+  }
+
+  let streak = 0;
+  const check = new Date(now);
+  while (true) {
+    const ds = toDateStr(check);
+    if (sessionDates.has(ds)) {
+      streak++;
+      check.setDate(check.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  const recentDays: JourneyStats['recentDays'] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const ds = toDateStr(d);
+    recentDays.push({
+      date: ds,
+      label: `${d.getMonth() + 1}/${d.getDate()}`,
+      hasSession: sessionDates.has(ds),
+      isToday: ds === todayStr,
+    });
+  }
+
+  return {
+    streak,
+    recentDays,
+    totalMinutes: Math.round(totalSeconds / 60),
+    totalSessions: sessions.length,
+  };
+}
+
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatTotalTime(minutes: number): string {
+  if (minutes < 60) return `${minutes}分`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}時間${m}分` : `${h}時間`;
+}
+
+function getStreakMessage(streak: number): string {
+  if (streak >= 30) return `連続${streak}日達成！すごい！`;
+  if (streak >= 14) return `連続${streak}日達成！`;
+  if (streak >= 7) return `連続${streak}日達成！`;
+  if (streak >= 3) return `連続${streak}日目！いい調子！`;
+  if (streak >= 2) return `連続${streak}日目！`;
+  return '今日もおつかれさま！';
+}
+
+// ジャーニーマップ表示までの待機時間（コメント表示後）
+const JOURNEY_REVEAL_DELAY = 800;
+
 export default function AfterScreen() {
   const params = useLocalSearchParams<{
     sessionId: string;
-    beforeMind: string;
+    bodyValue: string;
+    mindValue: string;
+    reactivityValue: string;
+    meditationGuideId: string;
   }>();
 
-  const [session, setSession] = useState<SessionLog | null>(null);
+  const [mascotMessage, setMascotMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [recorded, setRecorded] = useState(false);
+  const [journeyStats, setJourneyStats] = useState<JourneyStats | null>(null);
+  const [showJourney, setShowJourney] = useState(false);
 
-  // スライダー値（ホーム画面で選んだ値を初期値に）
-  const [mindValue, setMindValue] = useState(() => {
-    const beforeMind = parseFloat(params.beforeMind ?? '0');
-    return isNaN(beforeMind) ? 0 : beforeMind;
-  });   // こころ: -1(ざわざわ) ~ +1(しずか)
+  // アニメーション
+  const journeyOpacity = useRef(new Animated.Value(0)).current;
+  const journeyTranslateY = useRef(new Animated.Value(30)).current;
+  const scrollViewRef = useRef<ScrollView>(null);
 
-  // メモ
-  const [memo, setMemo] = useState('');
-
-  // マスコットメッセージ（ランダム選択、一度決めたら変えない）
-  const [mascotMessage] = useState(() =>
-    MASCOT_MESSAGES[Math.floor(Math.random() * MASCOT_MESSAGES.length)]
-  );
-
-  /**
-   * 画面表示時に SessionLog を取得
-   */
   useEffect(() => {
-    const fetchSession = async () => {
-      if (!params.sessionId) {
-        console.error('sessionId がありません');
-        setLoading(false);
-        return;
-      }
-
+    const fetchComment = async () => {
       try {
-        const result = await getSessionLog(params.sessionId);
-        setSession(result);
-      } catch (error) {
-        console.error('SessionLog 取得エラー:', error);
+        const comment = await generateAfterComment({
+          body: parseFloat(params.bodyValue ?? '3'),
+          mind: parseFloat(params.mindValue ?? '3'),
+          reactivity: parseFloat(params.reactivityValue ?? '3'),
+          meditationGuideId: params.meditationGuideId ?? '',
+        });
+        setMascotMessage(comment);
+      } catch {
+        setMascotMessage(
+          FALLBACK_MESSAGES[Math.floor(Math.random() * FALLBACK_MESSAGES.length)]
+        );
       } finally {
         setLoading(false);
       }
     };
 
-    fetchSession();
-  }, [params.sessionId]);
+    const fetchJourney = async () => {
+      try {
+        const sessions = await listSessionLogs();
+        setJourneyStats(calcJourneyStats(sessions));
+      } catch (error) {
+        console.error('Failed to load journey stats:', error);
+      }
+    };
 
-  /**
-   * 記録ボタン押下
-   */
-  const handleRecord = useCallback(async () => {
-    if (!session?.id) return;
+    fetchComment();
+    fetchJourney();
+  }, [params.bodyValue, params.mindValue, params.reactivityValue, params.meditationGuideId]);
 
-    setSaving(true);
+  // コメント表示完了後、ジャーニーマップをアニメーション表示
+  useEffect(() => {
+    if (loading || !journeyStats) return;
+
+    const timer = setTimeout(() => {
+      setShowJourney(true);
+
+      // やさしい振動
+      Vibration.vibrate(80);
+
+      // 効果音を再生
+      playRevealSound();
+
+      // フェードイン + スライドアップ
+      Animated.parallel([
+        Animated.timing(journeyOpacity, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(journeyTranslateY, {
+          toValue: 0,
+          duration: 600,
+          easing: Easing.out(Easing.back(1.2)),
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        // アニメーション完了後に下へスクロール
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      });
+    }, JOURNEY_REVEAL_DELAY);
+
+    return () => clearTimeout(timer);
+  }, [loading, journeyStats]);
+
+  const playRevealSound = async () => {
     try {
-      await updateSessionLog(
-        session.id,
-        0,            // afterValence: からだは削除されたので0
-        mindValue,    // afterArousal: こころ
-        memo || undefined,
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync(
+        require('@/assets/sounds/singing_bowls.mp3'),
+        { shouldPlay: true, volume: 0.8 }
       );
-      setRecorded(true);
+      // 3秒後に停止・解放
+      setTimeout(async () => {
+        try {
+          await sound.stopAsync();
+          await sound.unloadAsync();
+        } catch { /* ignore */ }
+      }, 3000);
     } catch (error) {
-      console.error('SessionLog 更新エラー:', error);
-    } finally {
-      setSaving(false);
+      console.error('Failed to play reveal sound:', error);
     }
-  }, [session?.id, mindValue, memo]);
+  };
 
-  /**
-   * ホームへ戻る
-   */
   const handleGoHome = () => {
     router.replace('/');
   };
 
-  // ローディング中
-  if (loading) {
-    return (
-      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
-        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#FF85A2" />
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
-
-  // セッションが見つからない場合（リフレッシュ時など）
-  if (!session) {
-    return (
-      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
-        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>
-              セッション情報が見つかりません
-            </Text>
-            <Text style={styles.errorHint}>
-              ページをリフレッシュした場合、{'\n'}記録が失われることがあります
-            </Text>
-            <TouchableOpacity
-              onPress={handleGoHome}
-              activeOpacity={0.8}
-              style={styles.homeButtonWrapper}
-            >
-              <LinearGradient
-                colors={['#FF85A2', '#FFB6C1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.homeButton}
-              >
-                <Text style={styles.homeButtonText}>ホームへ戻る</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
-
-  // Phase 2: 記録完了後
-  if (recorded) {
-    return (
-      <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
-        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-          <View style={styles.phase2Content}>
+  return (
+    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* りなわん + 吹き出し */}
+          <View style={styles.mascotArea}>
             {/* 吹き出し */}
             <View style={styles.speechBubbleContainer}>
               <LinearGradient
@@ -180,9 +241,13 @@ export default function AfterScreen() {
                 <View style={styles.sparkleBottomRight}>
                   <Text style={styles.sparkleText}>✧</Text>
                 </View>
-                <Text style={styles.speechBubbleText}>
-                  {mascotMessage}
-                </Text>
+                {loading ? (
+                  <ActivityIndicator size="small" color="#FF85A2" />
+                ) : (
+                  <Text style={styles.speechBubbleText}>
+                    {mascotMessage}
+                  </Text>
+                )}
               </LinearGradient>
               <View style={styles.speechBubbleTailOuter}>
                 <View style={styles.speechBubbleTail} />
@@ -197,160 +262,107 @@ export default function AfterScreen() {
             />
           </View>
 
-          {/* ホームへ戻るボタン */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              onPress={handleGoHome}
-              activeOpacity={0.8}
-              style={styles.buttonWrapper}
+          {/* ジャーニーマップ（遅延アニメーション表示） */}
+          {showJourney && journeyStats && (
+            <Animated.View
+              style={[
+                styles.journeyCard,
+                {
+                  opacity: journeyOpacity,
+                  transform: [{ translateY: journeyTranslateY }],
+                },
+              ]}
             >
               <LinearGradient
-                colors={['#FF85A2', '#FFB6C1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.button}
+                colors={['rgba(255,255,255,0.95)', 'rgba(255,240,245,0.9)']}
+                style={styles.journeyGradient}
               >
-                <Text style={styles.buttonText}>ホームへもどる</Text>
+                {/* ストリークヘッダー */}
+                <View style={styles.journeyHeader}>
+                  <Text style={styles.journeyStreakEmoji}>
+                    {journeyStats.streak >= 7 ? '🏆' : journeyStats.streak >= 3 ? '🔥' : '✨'}
+                  </Text>
+                  <Text style={styles.journeyStreakText}>
+                    {getStreakMessage(journeyStats.streak)}
+                  </Text>
+                </View>
+
+                {/* ドットタイムライン */}
+                <View style={styles.timelineContainer}>
+                  <View style={styles.timelineLine} />
+                  <View style={styles.timelineDots}>
+                    {journeyStats.recentDays.map((day) => (
+                      <View key={day.date} style={styles.timelineDayColumn}>
+                        <View
+                          style={[
+                            styles.timelineDot,
+                            day.hasSession && styles.timelineDotActive,
+                            day.isToday && styles.timelineDotToday,
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.timelineDateLabel,
+                            day.isToday && styles.timelineDateLabelToday,
+                          ]}
+                        >
+                          {day.isToday ? '今日' : day.label}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+
+                {/* 累計統計 */}
+                <View style={styles.statsRow}>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statValue}>
+                      {formatTotalTime(journeyStats.totalMinutes)}
+                    </Text>
+                    <Text style={styles.statLabel}>累計瞑想時間</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statItem}>
+                    <Text style={styles.statValue}>
+                      {journeyStats.totalSessions}回
+                    </Text>
+                    <Text style={styles.statLabel}>トレーニング回数</Text>
+                  </View>
+                </View>
               </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
+            </Animated.View>
+          )}
+        </ScrollView>
 
-  // Phase 1: 記録画面
-  return (
-    <LinearGradient colors={['#7AD7F0', '#CDECF6']} style={styles.gradient}>
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView
-          style={styles.keyboardAvoid}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          {/* タイトル */}
-          <View style={styles.titleWrapper}>
-            <LinearGradient
-              colors={['rgba(255,240,245,0.95)', 'rgba(255,255,255,0.95)', 'rgba(255,240,245,0.95)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.titleContainer}
-            >
-              <Text style={styles.titleDecorLeft}>✧ ⋆</Text>
-              <Text style={styles.title}>トレーニング後の状態を教えてね！</Text>
-              <Text style={styles.titleDecorRight}>⋆ ✧</Text>
-            </LinearGradient>
-          </View>
-
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
+        {/* ホームへ戻るボタン */}
+        <View style={styles.footer}>
+          <TouchableOpacity
+            onPress={handleGoHome}
+            activeOpacity={0.8}
+            style={styles.buttonWrapper}
           >
-            {/* スライダーセクション */}
-            <View style={styles.slidersContainer}>
-              <MindfulSlider
-                label="こころ"
-                leftLabel="ざわざわ"
-                rightLabel="しずか"
-                value={mindValue}
-                onValueChange={setMindValue}
-              />
-            </View>
-
-            {/* メモ入力 */}
-            <View style={styles.memoContainer}>
-              <TextInput
-                style={styles.memoInput}
-                placeholder="トレーニング中の気づきや、今の感覚など自由に…（任意）"
-                placeholderTextColor="#A0AEC0"
-                value={memo}
-                onChangeText={setMemo}
-                multiline
-                maxLength={200}
-              />
-            </View>
-          </ScrollView>
-
-          {/* 記録ボタン */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              onPress={handleRecord}
-              activeOpacity={0.8}
-              disabled={saving}
-              style={styles.buttonWrapper}
+            <LinearGradient
+              colors={['#FF85A2', '#FFB6C1']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.button}
             >
-              <LinearGradient
-                colors={['#FF85A2', '#FFB6C1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.button}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.buttonText}>この内容で記録する</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
+              <Text style={styles.buttonText}>ホームへもどる</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     </LinearGradient>
   );
 }
+
+const DOT_SIZE = 14;
 
 const styles = StyleSheet.create({
   gradient: {
     flex: 1,
   },
   container: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  errorContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  errorText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#4A5568',
-    marginBottom: 8,
-  },
-  errorHint: {
-    fontSize: 14,
-    color: '#718096',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  homeButtonWrapper: {
-    borderRadius: 25,
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  homeButton: {
-    borderRadius: 25,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  homeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  keyboardAvoid: {
     flex: 1,
   },
   scrollView: {
@@ -360,108 +372,15 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingTop: 0,
-    paddingBottom: 80,
-  },
-
-  // タイトル
-  titleWrapper: {
-    alignItems: 'center',
     paddingTop: 24,
-    paddingBottom: 8,
-    paddingHorizontal: 16,
-  },
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 182, 193, 0.5)',
-    shadowColor: '#FFB6C1',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#4A5568',
-    textAlign: 'center',
-    marginHorizontal: 4,
-  },
-  titleDecorLeft: {
-    fontSize: 14,
-    color: '#FF85A2',
-    marginRight: 4,
-  },
-  titleDecorRight: {
-    fontSize: 14,
-    color: '#FF85A2',
-    marginLeft: 4,
+    paddingBottom: 16,
   },
 
-  // スライダー
-  slidersContainer: {
+  // りなわん + 吹き出し
+  mascotArea: {
+    alignItems: 'center',
     marginBottom: 24,
   },
-
-  // メモ
-  memoContainer: {
-    marginBottom: 16,
-  },
-  memoInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 14,
-    color: '#4A5568',
-    minHeight: 80,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 182, 193, 0.3)',
-  },
-
-  // フッター
-  footer: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
-    paddingTop: 8,
-    alignItems: 'center',
-  },
-  buttonWrapper: {
-    borderRadius: 25,
-    shadowColor: '#FF85A2',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  button: {
-    borderRadius: 25,
-    paddingVertical: 14,
-    paddingHorizontal: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-
-  // Phase 2: 確認画面
-  phase2Content: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-
-  // 吹き出し
   speechBubbleContainer: {
     alignItems: 'center',
     marginBottom: 16,
@@ -515,12 +434,153 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent',
     borderTopColor: '#FFF0F5',
   },
-
-  // りなわん
   mascotImage: {
-    width: SCREEN_WIDTH * 0.4,
-    height: SCREEN_WIDTH * 0.4,
-    maxWidth: 160,
-    maxHeight: 160,
+    width: SCREEN_WIDTH * 0.35,
+    height: SCREEN_WIDTH * 0.35,
+    maxWidth: 140,
+    maxHeight: 140,
+  },
+
+  // ジャーニーマップ
+  journeyCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#FFB6C1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  journeyGradient: {
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 182, 193, 0.4)',
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+  },
+
+  // ストリークヘッダー
+  journeyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  journeyStreakEmoji: {
+    fontSize: 20,
+  },
+  journeyStreakText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#4A5568',
+  },
+
+  // タイムライン
+  timelineContainer: {
+    position: 'relative',
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  timelineLine: {
+    position: 'absolute',
+    left: DOT_SIZE / 2 + 4,
+    right: DOT_SIZE / 2 + 4,
+    top: DOT_SIZE / 2,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255, 182, 193, 0.3)',
+  },
+  timelineDots: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  timelineDayColumn: {
+    alignItems: 'center',
+    width: 36,
+  },
+  timelineDot: {
+    width: DOT_SIZE,
+    height: DOT_SIZE,
+    borderRadius: DOT_SIZE / 2,
+    backgroundColor: 'rgba(255, 182, 193, 0.3)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 182, 193, 0.4)',
+    marginBottom: 6,
+  },
+  timelineDotActive: {
+    backgroundColor: '#FF85A2',
+    borderColor: '#FF85A2',
+  },
+  timelineDotToday: {
+    backgroundColor: '#FF85A2',
+    borderColor: '#FF6B8A',
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  timelineDateLabel: {
+    fontSize: 10,
+    color: '#A0AEC0',
+  },
+  timelineDateLabelToday: {
+    color: '#FF85A2',
+    fontWeight: '700',
+  },
+
+  // 累計統計
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FF85A2',
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#718096',
+  },
+  statDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: 'rgba(255, 182, 193, 0.3)',
+  },
+
+  // フッター
+  footer: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  buttonWrapper: {
+    borderRadius: 25,
+    shadowColor: '#FF85A2',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  button: {
+    borderRadius: 25,
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

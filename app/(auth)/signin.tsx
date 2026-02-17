@@ -109,6 +109,14 @@ export default function SignInScreen() {
                 onChangeText={setPassword}
                 style={styles.input}
               />
+              <TouchableOpacity
+                onPress={() => router.push("/(auth)/reset-password")}
+                style={styles.forgotPasswordLink}
+              >
+                <Text style={styles.forgotPasswordText}>
+                  パスワードをお忘れですか？
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {!!err && (
@@ -297,5 +305,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#5A6B7C",
     textDecorationLine: "underline",
+  },
+  forgotPasswordLink: {
+    alignSelf: "flex-end",
+    marginTop: 8,
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    color: "#718096",
   },
 });

@@ -440,6 +440,99 @@ function getDefaultAnalysis(): StressAnalysisResult {
 }
 
 // ========================================
+// マインドフルコメント生成（りなわんの一言）
+// ========================================
+
+const MINDFUL_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」というマインドフルネスの案内役キャラクターです。
+ユーザーが入力した3つの心身状態の値をもとに、やさしく寄り添う一言を生成してください。
+
+【りなわんのキャラクター】
+- 一人称は「ボク」
+- 親しみやすくやさしい口調（「〜だね」「〜だよ」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+
+【値の意味（1〜3）】
+- body: 身体の感じ（1=軽い、2=ふつう、3=重い）
+- mind: 心の感じ（1=軽い、2=ふつう、3=重い）
+- reactivity: 心の反応しやすさ（1=敏感だがすぐに安定、2=敏感な状態が続く、3=常に安定）
+
+【ルール】
+- 1〜2文、30文字以内
+- アドバイスではなく、気持ちへの寄り添い
+- 選んだ状態をやさしくケアする一言
+- 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は使わない
+- やさしい日常の言葉だけを使う`;
+
+const MINDFUL_COMMENT_FALLBACK_MESSAGES = [
+  '今の自分に気づけたね',
+  '教えてくれてありがとう',
+  '一緒にゆっくりしよう',
+  '自分を感じる時間だね',
+  '今のままで大丈夫だよ',
+];
+
+/**
+ * 3つの選択値からりなわんの一言コメントを生成
+ */
+export async function generateMindfulComment(params: {
+  body: number;
+  mind: number;
+  reactivity: number;
+}): Promise<string> {
+  try {
+    const prompt = `body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}`;
+    const result = await callOpenRouter(prompt, MINDFUL_COMMENT_SYSTEM_PROMPT, 'classification');
+    return result.trim().replace(/^[「『]|[」』]$/g, '');
+  } catch (error) {
+    console.error('generateMindfulComment error:', error);
+    return MINDFUL_COMMENT_FALLBACK_MESSAGES[
+      Math.floor(Math.random() * MINDFUL_COMMENT_FALLBACK_MESSAGES.length)
+    ];
+  }
+}
+
+const AFTER_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」というやさしい案内役キャラクターです。
+瞑想トレーニングを終えたユーザーに、やさしく寄り添う一言を生成してください。
+
+【りなわんのキャラクター】
+- 一人称は「ボク」
+- 親しみやすくやさしい口調（「〜だね」「〜だよ」）
+- 相手の気持ちに寄り添い、押し付けがましくない
+
+【ルール】
+- 1〜2文
+- ねぎらいの気持ちを込める
+- 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は絶対に使わない
+- やさしい日常の言葉だけを使う
+- 「〜だね」「〜だよ」のやさしい語尾`;
+
+/**
+ * トレーニング後のりなわんコメントを生成
+ */
+export async function generateAfterComment(params: {
+  body: number;
+  mind: number;
+  reactivity: number;
+  meditationGuideId: string;
+}): Promise<string> {
+  try {
+    const prompt = `瞑想前の状態: body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}\n実施した瞑想タイプ: ${params.meditationGuideId}\n\nトレーニングを終えたユーザーへのやさしい一言を生成してください。`;
+    const result = await callOpenRouter(prompt, AFTER_COMMENT_SYSTEM_PROMPT, 'classification');
+    return result.trim().replace(/^[「『]|[」』]$/g, '');
+  } catch (error) {
+    console.error('generateAfterComment error:', error);
+    const fallbacks = [
+      'おつかれさま！\n今日も自分と過ごす時間をつくれたね。',
+      'えらいね！\nまた気が向いたら会いに来てね。',
+      'おつかれさま！\nどんな感覚でも、気づけたことがすばらしいよ。',
+      'ありがとう！\n今の自分に気づけたね。',
+      'がんばったね！\nゆっくり休んでね。',
+    ];
+    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  }
+}
+
+// ========================================
 // イベントチャット（AIレビュー）機能
 // ========================================
 
