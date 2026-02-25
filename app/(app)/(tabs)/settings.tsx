@@ -11,12 +11,12 @@ import {
   Modal,
   StatusBar,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { signOut } from 'aws-amplify/auth';
+import { signOut, fetchUserAttributes } from 'aws-amplify/auth';
 import { router } from 'expo-router';
-import { usePreferences, TrainingMode, VoiceType, GuideMode, AmbientSound, NotificationTime, DesignTheme } from '@/hooks/usePreferences';
+import { usePreferences, NotificationTime, DesignTheme } from '@/hooks/usePreferences';
 import { useThemeColors } from '@/hooks/useThemeColors';
 import { resetClient } from '@/lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,6 +34,12 @@ import {
   cancelNotification,
   setupNotificationHandler,
 } from '@/lib/notifications';
+let setAlternateAppIcon: ((name: string | null) => Promise<void>) | null = null;
+try {
+  setAlternateAppIcon = require('expo-alternate-app-icons').setAlternateAppIcon;
+} catch {
+  // Expo Go ではネイティブモジュールが利用不可
+}
 
 /**
  * SettingsScreen - 設定画面
@@ -41,16 +47,7 @@ import {
  * ユーザー設定・ログアウト・カレンダー連携管理
  */
 export default function SettingsScreen() {
-  // トレーニングモード・音声設定・ガイドモード・通知設定
   const {
-    trainingMode,
-    setTrainingMode,
-    voice,
-    setVoice,
-    guideMode,
-    setGuideMode,
-    ambientSound,
-    setAmbientSound,
     notificationTimes,
     addNotificationTime,
     updateNotificationTime,
@@ -59,6 +56,22 @@ export default function SettingsScreen() {
     setDesignTheme,
   } = usePreferences();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
+
+  // ユーザー情報
+  const [userEmail, setUserEmail] = useState<string>('');
+
+  useEffect(() => {
+    const loadUserInfo = async () => {
+      try {
+        const attributes = await fetchUserAttributes();
+        setUserEmail(attributes.email ?? '');
+      } catch (error) {
+        console.error('Failed to fetch user attributes:', error);
+      }
+    };
+    loadUserInfo();
+  }, []);
 
   // Googleカレンダー連携
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
@@ -75,34 +88,18 @@ export default function SettingsScreen() {
   const [tempHour, setTempHour] = useState(20);
   const [tempMinute, setTempMinute] = useState(0);
 
-  const handleModeChange = (newMode: TrainingMode) => {
-    setTrainingMode(newMode);
-  };
-
-  const handleVoiceChange = (newVoice: VoiceType) => {
-    setVoice(newVoice);
-  };
-
-  const handleGuideModeChange = (newMode: GuideMode) => {
-    setGuideMode(newMode);
-  };
-
-  const handleAmbientSoundChange = (newSound: AmbientSound) => {
-    setAmbientSound(newSound);
-  };
-
   // 通知ハンドラーの初期設定
   useEffect(() => {
     setupNotificationHandler();
     setupNotificationChannel();
   }, []);
 
-  // 通知設定が変更されたらスケジュールを更新
+  // 通知設定またはテーマが変更されたらスケジュールを更新
   useEffect(() => {
     if (notificationTimes.length > 0) {
-      scheduleAllNotifications(notificationTimes);
+      scheduleAllNotifications(notificationTimes, designTheme);
     }
-  }, [notificationTimes]);
+  }, [notificationTimes, designTheme]);
 
   /**
    * 新しい通知を追加
@@ -367,16 +364,37 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleDesignThemeChange = (theme: DesignTheme) => {
+  const handleDesignThemeChange = async (theme: DesignTheme) => {
     setDesignTheme(theme);
+    if (setAlternateAppIcon) {
+      try {
+        if (theme === 'simple') {
+          await setAlternateAppIcon('icon-simple-mode');
+        } else {
+          await setAlternateAppIcon(null);
+        }
+      } catch (error) {
+        console.error('アイコン切り替えエラー:', error);
+      }
+    }
   };
 
   return (
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
       <StatusBar barStyle={colors.statusBarStyle} />
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* プロフィールヘッダー */}
+        <View style={[styles.profileHeader, { backgroundColor: colors.card }]}>
+          <View style={[styles.profileIconContainer, { backgroundColor: colors.accent + '20' }]}>
+            <Ionicons name="person" size={32} color={colors.accent} />
+          </View>
+          <Text style={[styles.profileEmail, { color: colors.textPrimary }]}>
+            {userEmail || '読み込み中...'}
+          </Text>
+          <Text style={[styles.profileLabel, { color: colors.textMuted }]}>マイページ</Text>
+        </View>
+
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>設定</Text>
 
           {/* デザインテーマ設定 */}
           <View style={[styles.section, { backgroundColor: colors.card }]}>
@@ -419,219 +437,6 @@ export default function SettingsScreen() {
             </View>
             <Text style={[styles.sectionHint, { color: colors.textMuted }]}>アプリ全体のデザインが変わります</Text>
           </View>
-
-          {/* トレーニングモード設定 */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>トレーニング表示モード</Text>
-            <View style={styles.modeSelector}>
-              <TouchableOpacity
-                style={[
-                  styles.modeButton,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  trainingMode === 'intuitive' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
-                ]}
-                onPress={() => handleModeChange('intuitive')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.modeButtonText,
-                  { color: colors.textSecondary },
-                  trainingMode === 'intuitive' && { color: colors.selectorSelectedText, fontWeight: '600' },
-                ]}>
-                  直感モード
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modeButton,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  trainingMode === 'verbal' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
-                ]}
-                onPress={() => handleModeChange('verbal')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.modeButtonText,
-                  { color: colors.textSecondary },
-                  trainingMode === 'verbal' && { color: colors.selectorSelectedText, fontWeight: '600' },
-                ]}>
-                  言語化モード
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>途中でいつでも変更できます</Text>
-          </View>
-
-          {/* 音声ガイド設定 */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>音声ガイドの話者</Text>
-            <View style={styles.modeSelector}>
-              <TouchableOpacity
-                style={[
-                  styles.modeButton,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  voice === 'rina' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
-                ]}
-                onPress={() => handleVoiceChange('rina')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.modeButtonText,
-                  { color: colors.textSecondary },
-                  voice === 'rina' && { color: colors.selectorSelectedText, fontWeight: '600' },
-                ]}>
-                  野村里奈
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modeButton,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  voice === 'rinawan' && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
-                ]}
-                onPress={() => handleVoiceChange('rinawan')}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  styles.modeButtonText,
-                  { color: colors.textSecondary },
-                  voice === 'rinawan' && { color: colors.selectorSelectedText, fontWeight: '600' },
-                ]}>
-                  りなわん
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.sectionHint, { color: colors.textMuted }]}>瞑想画面で使用する音声ガイドの声を選択</Text>
-          </View>
-
-          {/* ガイドモード設定 */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>瞑想ガイド</Text>
-            <View style={styles.guideSelector}>
-              <TouchableOpacity
-                style={[
-                  styles.guideOption,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  guideMode === 'timer' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
-                ]}
-                onPress={() => handleGuideModeChange('timer')}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name="timer-outline"
-                  size={24}
-                  color={guideMode === 'timer' ? colors.accent : colors.textSecondary}
-                />
-                <Text style={[
-                  styles.guideOptionTitle,
-                  { color: colors.textSecondary },
-                  guideMode === 'timer' && { color: colors.accent },
-                ]}>
-                  タイマーのみ
-                </Text>
-                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
-                  シンプルなタイマーで{'\n'}自分のペースで
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.guideOption,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  guideMode === 'ambient' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
-                ]}
-                onPress={() => handleGuideModeChange('ambient')}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name="leaf-outline"
-                  size={24}
-                  color={guideMode === 'ambient' ? colors.accent : colors.textSecondary}
-                />
-                <Text style={[
-                  styles.guideOptionTitle,
-                  { color: colors.textSecondary },
-                  guideMode === 'ambient' && { color: colors.accent },
-                ]}>
-                  環境音
-                </Text>
-                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
-                  心地よい環境音{'\n'}とともに
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.guideOption,
-                  { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                  guideMode === 'guided' && { backgroundColor: `${colors.accent}20`, borderColor: colors.accent },
-                ]}
-                onPress={() => handleGuideModeChange('guided')}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name="headset-outline"
-                  size={24}
-                  color={guideMode === 'guided' ? colors.accent : colors.textSecondary}
-                />
-                <Text style={[
-                  styles.guideOptionTitle,
-                  { color: colors.textSecondary },
-                  guideMode === 'guided' && { color: colors.accent },
-                ]}>
-                  瞑想ガイド
-                </Text>
-                <Text style={[styles.guideOptionDesc, { color: colors.textMuted }]}>
-                  音声ガイドに{'\n'}沿って
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* 環境音選択（環境音モード時のみ表示） */}
-          {guideMode === 'ambient' && (
-            <View style={[styles.section, { backgroundColor: colors.card }]}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>環境音の種類</Text>
-              <View style={styles.ambientGrid}>
-                {[
-                  [
-                    { id: 'birds' as AmbientSound, icon: '🐦', label: '小鳥' },
-                    { id: 'river' as AmbientSound, icon: '🏞️', label: '川' },
-                    { id: 'rain' as AmbientSound, icon: '🌧️', label: '雨' },
-                  ],
-                  [
-                    { id: 'wave' as AmbientSound, icon: '🌊', label: '波' },
-                    { id: 'bonfire' as AmbientSound, icon: '🔥', label: '焚き火' },
-                    { id: 'singing_bowls' as AmbientSound, icon: '🌌', label: 'シンギングボール' },
-                  ],
-                ].map((row, rowIndex) => (
-                  <View key={rowIndex} style={styles.ambientRow}>
-                    {row.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={[
-                          styles.ambientButton,
-                          { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
-                          ambientSound === item.id && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
-                        ]}
-                        onPress={() => handleAmbientSoundChange(item.id)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.ambientIcon}>{item.icon}</Text>
-                        <Text style={[
-                          styles.modeButtonText,
-                          { color: colors.textSecondary },
-                          ambientSound === item.id && { color: colors.selectorSelectedText, fontWeight: '600' },
-                        ]}>
-                          {item.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
 
           {/* 瞑想リマインダーセクション */}
           <View style={[styles.section, { backgroundColor: colors.card }]}>
@@ -706,93 +511,6 @@ export default function SettingsScreen() {
               {colors.showMascot ? 'りなわんが毎日お知らせします' : '毎日お知らせします'}
             </Text>
           </View>
-
-          {/* 時刻選択モーダル */}
-          <Modal
-            visible={showTimePicker}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setShowTimePicker(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>
-                  {editingNotificationId ? '通知時刻を変更' : '通知時刻を追加'}
-                </Text>
-
-                <View style={styles.pickerContainer}>
-                  <View style={styles.pickerColumn}>
-                    <Text style={styles.pickerLabel}>時</Text>
-                    <ScrollView
-                      style={styles.pickerScroll}
-                      showsVerticalScrollIndicator={false}
-                    >
-                      {Array.from({ length: 24 }, (_, i) => (
-                        <TouchableOpacity
-                          key={i}
-                          style={[
-                            styles.pickerItem,
-                            tempHour === i && styles.pickerItemSelected,
-                          ]}
-                          onPress={() => setTempHour(i)}
-                        >
-                          <Text style={[
-                            styles.pickerItemText,
-                            tempHour === i && styles.pickerItemTextSelected,
-                          ]}>
-                            {i.toString().padStart(2, '0')}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-
-                  <Text style={styles.pickerColon}>:</Text>
-
-                  <View style={styles.pickerColumn}>
-                    <Text style={styles.pickerLabel}>分</Text>
-                    <ScrollView
-                      style={styles.pickerScroll}
-                      showsVerticalScrollIndicator={false}
-                    >
-                      {Array.from({ length: 12 }, (_, i) => i * 5).map((minute) => (
-                        <TouchableOpacity
-                          key={minute}
-                          style={[
-                            styles.pickerItem,
-                            tempMinute === minute && styles.pickerItemSelected,
-                          ]}
-                          onPress={() => setTempMinute(minute)}
-                        >
-                          <Text style={[
-                            styles.pickerItemText,
-                            tempMinute === minute && styles.pickerItemTextSelected,
-                          ]}>
-                            {minute.toString().padStart(2, '0')}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                </View>
-
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity
-                    style={styles.modalCancelButton}
-                    onPress={() => setShowTimePicker(false)}
-                  >
-                    <Text style={styles.modalCancelText}>キャンセル</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalConfirmButton}
-                    onPress={handleConfirmTime}
-                  >
-                    <Text style={styles.modalConfirmText}>決定</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          </Modal>
 
           {/* カレンダー連携セクション */}
           <View style={[styles.section, { backgroundColor: colors.card }]}>
@@ -885,20 +603,104 @@ export default function SettingsScreen() {
             )}
           </View>
 
-          {/* アカウントセクション */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>アカウント</Text>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleSignOut}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="log-out-outline" size={20} color="#E53E3E" />
-              <Text style={styles.menuItemText}>ログアウト</Text>
-            </TouchableOpacity>
-          </View>
+          {/* ログアウトボタン */}
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleSignOut}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="log-out-outline" size={20} color="#E53E3E" />
+            <Text style={styles.logoutButtonText}>ログアウト</Text>
+          </TouchableOpacity>
         </ScrollView>
-      </SafeAreaView>
+
+        {/* 時刻選択モーダル */}
+        <Modal
+          visible={showTimePicker}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowTimePicker(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>
+                {editingNotificationId ? '通知時刻を変更' : '通知時刻を追加'}
+              </Text>
+
+              <View style={styles.pickerContainer}>
+                <View style={styles.pickerColumn}>
+                  <Text style={styles.pickerLabel}>時</Text>
+                  <ScrollView
+                    style={styles.pickerScroll}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={[
+                          styles.pickerItem,
+                          tempHour === i && styles.pickerItemSelected,
+                        ]}
+                        onPress={() => setTempHour(i)}
+                      >
+                        <Text style={[
+                          styles.pickerItemText,
+                          tempHour === i && styles.pickerItemTextSelected,
+                        ]}>
+                          {i.toString().padStart(2, '0')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+
+                <Text style={styles.pickerColon}>:</Text>
+
+                <View style={styles.pickerColumn}>
+                  <Text style={styles.pickerLabel}>分</Text>
+                  <ScrollView
+                    style={styles.pickerScroll}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i * 5).map((minute) => (
+                      <TouchableOpacity
+                        key={minute}
+                        style={[
+                          styles.pickerItem,
+                          tempMinute === minute && styles.pickerItemSelected,
+                        ]}
+                        onPress={() => setTempMinute(minute)}
+                      >
+                        <Text style={[
+                          styles.pickerItemText,
+                          tempMinute === minute && styles.pickerItemTextSelected,
+                        ]}>
+                          {minute.toString().padStart(2, '0')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={styles.modalCancelButton}
+                  onPress={() => setShowTimePicker(false)}
+                >
+                  <Text style={styles.modalCancelText}>キャンセル</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalConfirmButton}
+                  onPress={handleConfirmTime}
+                >
+                  <Text style={styles.modalConfirmText}>決定</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </View>
     </LinearGradient>
   );
 }
@@ -915,14 +717,32 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 4,
     paddingBottom: 40,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#4A5568',
-    marginBottom: 24,
+  profileHeader: {
+    marginHorizontal: 20,
+    borderRadius: 12,
+    padding: 24,
+    marginTop: 20,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  profileIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  profileEmail: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  profileLabel: {
+    fontSize: 13,
   },
   section: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
@@ -978,61 +798,6 @@ const styles = StyleSheet.create({
   modeButtonTextSelected: {
     color: '#2D7A6E',
     fontWeight: '600',
-  },
-  guideSelector: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  guideOption: {
-    flex: 1,
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    borderWidth: 2,
-    borderColor: 'transparent',
-    alignItems: 'center',
-  },
-  guideOptionSelected: {
-    backgroundColor: 'rgba(255, 133, 162, 0.15)',
-    borderColor: '#FF85A2',
-  },
-  guideOptionTitle: {
-    fontSize: 13,
-    color: '#718096',
-    fontWeight: '600',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  guideOptionTitleSelected: {
-    color: '#FF85A2',
-  },
-  guideOptionDesc: {
-    fontSize: 10,
-    color: '#A0AEC0',
-    textAlign: 'center',
-    lineHeight: 14,
-  },
-  ambientGrid: {
-    gap: 10,
-  },
-  ambientRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  ambientButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    backgroundColor: 'rgba(122, 215, 240, 0.2)',
-    borderWidth: 2,
-    borderColor: 'transparent',
-    alignItems: 'center',
-  },
-  ambientIcon: {
-    fontSize: 20,
-    marginBottom: 4,
   },
   // 通知関連スタイル
   emptyNotification: {
@@ -1275,16 +1040,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#E53E3E',
   },
-  menuItem: {
+  logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    justifyContent: 'center',
     borderRadius: 12,
     paddingVertical: 14,
-    paddingHorizontal: 16,
-    gap: 12,
+    borderWidth: 1,
+    borderColor: '#E53E3E',
+    gap: 8,
+    marginBottom: 16,
   },
-  menuItemText: {
+  logoutButtonText: {
     fontSize: 15,
     color: '#E53E3E',
     fontWeight: '500',

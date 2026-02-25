@@ -4,7 +4,7 @@
     "slug": "koko-pon-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/icon_cute_mode.png",
     "buildNumber": "2",
     "scheme": [
       "kokoponmobile",
@@ -17,7 +17,9 @@
       "bundleIdentifier": "com.nobusugahara.kokoponmobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -50,7 +52,15 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-alternate-app-icons",
+        {
+          "icons": {
+            "icon-simple-mode": "./assets/images/icon_simple_mode.png"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

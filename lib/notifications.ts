@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import type { DesignTheme } from '@/hooks/usePreferences';
 
 // 通知時刻の型
 export type NotificationTime = {
@@ -9,7 +10,7 @@ export type NotificationTime = {
   enabled: boolean;
 };
 
-// りなわんからのメッセージ
+// りなわんからのメッセージ（キュートモード）
 const RINAWAN_MESSAGES = [
   '今日の瞑想、まだやってないワン！一緒にやろうワン！',
   '深呼吸の時間だワン！心を落ち着けようワン！',
@@ -19,6 +20,18 @@ const RINAWAN_MESSAGES = [
   'ちょっと休憩して瞑想するワン！お待ちしてるワン！',
   '瞑想の時間だワン！今日の自分と向き合おうワン！',
   '頑張りすぎてないワン？瞑想でリラックスするワン！',
+];
+
+// シンプルモード用メッセージ（丁寧語）
+const SIMPLE_MESSAGES = [
+  '今日の瞑想はお済みですか？ひと息つきましょう。',
+  '深呼吸の時間です。心を落ち着けましょう。',
+  '瞑想でリフレッシュしませんか？お待ちしております。',
+  'そろそろ瞑想の時間です。準備はよろしいですか？',
+  '本日も瞑想で心を整えましょう。',
+  '少し休憩して、瞑想の時間にしませんか？',
+  '瞑想の時間です。今日の自分と向き合いましょう。',
+  'お疲れではありませんか？瞑想でリラックスしましょう。',
 ];
 
 // 通知チャンネルID (Android用)
@@ -61,11 +74,19 @@ export async function setupNotificationChannel(): Promise<void> {
 }
 
 /**
- * りなわんメッセージをランダムに取得
+ * テーマに応じたメッセージをランダムに取得
  */
-function getRandomMessage(): string {
-  const index = Math.floor(Math.random() * RINAWAN_MESSAGES.length);
-  return RINAWAN_MESSAGES[index];
+function getRandomMessage(designTheme: DesignTheme = 'cute'): string {
+  const messages = designTheme === 'simple' ? SIMPLE_MESSAGES : RINAWAN_MESSAGES;
+  const index = Math.floor(Math.random() * messages.length);
+  return messages[index];
+}
+
+/**
+ * テーマに応じた通知タイトルを取得
+ */
+function getNotificationTitle(designTheme: DesignTheme = 'cute'): string {
+  return designTheme === 'simple' ? '瞑想リマインダー' : '🐕 りなわんからのお知らせ';
 }
 
 /**
@@ -74,14 +95,15 @@ function getRandomMessage(): string {
 export async function scheduleNotification(
   id: string,
   hour: number,
-  minute: number
+  minute: number,
+  designTheme: DesignTheme = 'cute'
 ): Promise<string | null> {
   try {
     const identifier = await Notifications.scheduleNotificationAsync({
       identifier: id,
       content: {
-        title: '🐕 りなわんからのお知らせ',
-        body: getRandomMessage(),
+        title: getNotificationTitle(designTheme),
+        body: getRandomMessage(designTheme),
         sound: true,
       },
       trigger: {
@@ -104,7 +126,8 @@ export async function scheduleNotification(
  * 複数の通知をまとめてスケジュール
  */
 export async function scheduleAllNotifications(
-  times: NotificationTime[]
+  times: NotificationTime[],
+  designTheme: DesignTheme = 'cute'
 ): Promise<void> {
   try {
     // 既存の通知をすべてキャンセル
@@ -113,7 +136,7 @@ export async function scheduleAllNotifications(
     // 有効な通知のみスケジュール
     for (const time of times) {
       if (time.enabled) {
-        await scheduleNotification(time.id, time.hour, time.minute);
+        await scheduleNotification(time.id, time.hour, time.minute, designTheme);
       }
     }
     console.log(`${times.filter(t => t.enabled).length}件の通知をスケジュールしました`);

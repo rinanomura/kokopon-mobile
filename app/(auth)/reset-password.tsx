@@ -15,6 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useThemeColors } from "@/hooks/useThemeColors";
 
 type Step = "request" | "confirm";
 
@@ -26,6 +27,7 @@ export default function ResetPasswordScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const colors = useThemeColors();
 
   // ステップ1: リセットコードをリクエスト
   async function onRequestReset() {
@@ -80,7 +82,7 @@ export default function ResetPasswordScreen() {
     confirmPassword.length > 0;
 
   return (
-    <LinearGradient colors={["#7AD7F0", "#CDECF6"]} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
       <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -90,9 +92,11 @@ export default function ResetPasswordScreen() {
           <View style={styles.headerNav}>
             <TouchableOpacity
               onPress={() => router.back()}
-              style={styles.backButton}
+              style={[styles.backButton, {
+                backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : "rgba(255, 255, 255, 0.1)",
+              }]}
             >
-              <Ionicons name="chevron-back" size={24} color="#4A5568" />
+              <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
 
@@ -103,45 +107,62 @@ export default function ResetPasswordScreen() {
             showsVerticalScrollIndicator={false}
           >
             {/* ヘッダー部分 */}
-            <View style={styles.header}>
-              <Image
-                source={require("@/assets/images/rinawan_tilting_head.gif")}
-                style={styles.mascotImage}
-                resizeMode="contain"
-              />
-              <View style={styles.speechBubbleContainer}>
-                <View style={styles.speechBubbleTail} />
-                <LinearGradient
-                  colors={["#FFF5F7", "#FFFFFF", "#FFF0F5"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.speechBubble}
-                >
-                  <Text style={styles.speechBubbleText}>
-                    {step === "request"
-                      ? "メールアドレスを\n入力してね"
-                      : "届いたコードを\n入力してね"}
-                  </Text>
-                </LinearGradient>
+            {colors.showMascot ? (
+              <View style={styles.header}>
+                <Image
+                  source={require("@/assets/images/rinawan_tilting_head.gif")}
+                  style={styles.mascotImage}
+                  resizeMode="contain"
+                />
+                <View style={styles.speechBubbleContainer}>
+                  <View style={[styles.speechBubbleTail, { borderRightColor: colors.bubbleBg[0] }]} />
+                  <LinearGradient
+                    colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
+                  >
+                    <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                      {step === "request"
+                        ? "メールアドレスを\n入力してね"
+                        : "届いたコードを\n入力してね"}
+                    </Text>
+                  </LinearGradient>
+                </View>
               </View>
-            </View>
+            ) : (
+              <View style={styles.simpleHeader}>
+                <Text style={[styles.simpleTitle, { color: colors.textPrimary }]}>
+                  パスワードリセット
+                </Text>
+                <Text style={[styles.simpleSubtitle, { color: colors.textSecondary }]}>
+                  {step === "request"
+                    ? "メールアドレスを入力してください"
+                    : "届いたコードを入力してください"}
+                </Text>
+              </View>
+            )}
 
             {/* フォーム部分 */}
             <View style={styles.formContainer}>
               {step === "request" ? (
                 // ステップ1: メールアドレス入力
                 <View style={styles.inputWrapper}>
-                  <Text style={styles.inputLabel}>メールアドレス</Text>
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>メールアドレス</Text>
                   <TextInput
                     autoCapitalize="none"
                     keyboardType="email-address"
                     placeholder="example@email.com"
-                    placeholderTextColor="#A0AEC0"
+                    placeholderTextColor={colors.textMuted}
                     value={email}
                     onChangeText={setEmail}
-                    style={styles.input}
+                    style={[styles.input, {
+                      backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                      borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                      color: colors.textPrimary,
+                    }]}
                   />
-                  <Text style={styles.hint}>
+                  <Text style={[styles.hint, { color: colors.textMuted }]}>
                     登録済みのメールアドレスにリセットコードを送信します
                   </Text>
                 </View>
@@ -149,39 +170,51 @@ export default function ResetPasswordScreen() {
                 // ステップ2: コードと新しいパスワード入力
                 <>
                   <View style={styles.inputWrapper}>
-                    <Text style={styles.inputLabel}>確認コード</Text>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>確認コード</Text>
                     <TextInput
                       keyboardType="number-pad"
                       placeholder="6桁のコードを入力"
-                      placeholderTextColor="#A0AEC0"
+                      placeholderTextColor={colors.textMuted}
                       value={code}
                       onChangeText={setCode}
-                      style={styles.input}
+                      style={[styles.input, {
+                        backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                        borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                        color: colors.textPrimary,
+                      }]}
                       maxLength={6}
                     />
                   </View>
 
                   <View style={styles.inputWrapper}>
-                    <Text style={styles.inputLabel}>新しいパスワード</Text>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>新しいパスワード</Text>
                     <TextInput
                       secureTextEntry
                       placeholder="8文字以上"
-                      placeholderTextColor="#A0AEC0"
+                      placeholderTextColor={colors.textMuted}
                       value={newPassword}
                       onChangeText={setNewPassword}
-                      style={styles.input}
+                      style={[styles.input, {
+                        backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                        borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                        color: colors.textPrimary,
+                      }]}
                     />
                   </View>
 
                   <View style={styles.inputWrapper}>
-                    <Text style={styles.inputLabel}>パスワード（確認）</Text>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>パスワード（確認）</Text>
                     <TextInput
                       secureTextEntry
                       placeholder="もう一度入力"
-                      placeholderTextColor="#A0AEC0"
+                      placeholderTextColor={colors.textMuted}
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
-                      style={styles.input}
+                      style={[styles.input, {
+                        backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                        borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                        color: colors.textPrimary,
+                      }]}
                     />
                   </View>
                 </>
@@ -203,12 +236,12 @@ export default function ResetPasswordScreen() {
                   busy ||
                   (step === "request" ? !isRequestValid : !isConfirmValid)
                 }
-                style={styles.buttonWrapper}
+                style={[styles.buttonWrapper, { shadowColor: colors.buttonShadow }]}
               >
                 <LinearGradient
                   colors={
                     (step === "request" ? isRequestValid : isConfirmValid) && !busy
-                      ? ["#FF85A2", "#FFB6C1"]
+                      ? [colors.buttonGradientStart, colors.buttonGradientEnd]
                       : ["#A0AEC0", "#B8C5D0"]
                   }
                   start={{ x: 0, y: 0 }}
@@ -230,7 +263,7 @@ export default function ResetPasswordScreen() {
                   onPress={() => setStep("request")}
                   style={styles.linkButton}
                 >
-                  <Text style={styles.linkText}>
+                  <Text style={[styles.linkText, { color: colors.textSecondary }]}>
                     コードが届かない場合はこちら
                   </Text>
                 </TouchableOpacity>
@@ -268,7 +301,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "rgba(255, 255, 255, 0.5)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -296,7 +328,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderTopColor: "transparent",
     borderBottomColor: "transparent",
-    borderRightColor: "#FFF5F7",
     marginRight: -1,
   },
   speechBubble: {
@@ -304,18 +335,30 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 18,
     borderWidth: 2,
-    borderColor: "rgba(255, 182, 193, 0.5)",
-    shadowColor: "#FFB6C1",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
   },
   speechBubbleText: {
     fontSize: 14,
-    color: "#5A6B7C",
     fontWeight: "600",
     lineHeight: 21,
+  },
+  simpleHeader: {
+    alignItems: "center",
+    marginTop: 24,
+    marginBottom: 40,
+    paddingHorizontal: 20,
+  },
+  simpleTitle: {
+    fontSize: 24,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  simpleSubtitle: {
+    fontSize: 15,
   },
   formContainer: {
     paddingHorizontal: 24,
@@ -327,18 +370,14 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#5A6B7C",
     marginLeft: 4,
   },
   input: {
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
     borderRadius: 16,
     paddingVertical: 14,
     paddingHorizontal: 16,
     fontSize: 16,
-    color: "#11181C",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.5)",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -347,7 +386,6 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
-    color: "#718096",
     marginLeft: 4,
     marginTop: 4,
   },
@@ -371,7 +409,6 @@ const styles = StyleSheet.create({
   buttonWrapper: {
     width: "100%",
     borderRadius: 25,
-    shadowColor: "#FF85A2",
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -394,7 +431,6 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: "#5A6B7C",
     textDecorationLine: "underline",
   },
 });

@@ -13,12 +13,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { signIn, signOut, getCurrentUser } from "aws-amplify/auth";
 import { router } from "expo-router";
+import { useThemeColors } from "@/hooks/useThemeColors";
 
 export default function SignInScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const colors = useThemeColors();
 
   async function onSignIn() {
     setErr(null);
@@ -53,67 +55,86 @@ export default function SignInScreen() {
   const isFormValid = email.trim().length > 0 && password.length > 0;
 
   return (
-    <LinearGradient colors={["#7AD7F0", "#CDECF6"]} style={styles.gradient}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
       <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={styles.keyboardView}
         >
           {/* ヘッダー部分 */}
-          <View style={styles.header}>
-            <Image
-              source={require("@/assets/images/rinawan_tilting_head.gif")}
-              style={styles.mascotImage}
-              resizeMode="contain"
-            />
-            <View style={styles.speechBubbleContainer}>
-              <View style={styles.speechBubbleTail} />
-              <LinearGradient
-                colors={["#FFF5F7", "#FFFFFF", "#FFF0F5"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.speechBubble}
-              >
-                <View style={styles.sparkleTopRight}>
-                  <Text style={styles.sparkleText}>✧</Text>
-                </View>
-                <Text style={styles.speechBubbleText}>
-                  おかえりなさい！{"\n"}ログインしてね
-                </Text>
-              </LinearGradient>
+          {colors.showMascot ? (
+            <View style={styles.header}>
+              <Image
+                source={require("@/assets/images/rinawan_tilting_head.gif")}
+                style={styles.mascotImage}
+                resizeMode="contain"
+              />
+              <View style={styles.speechBubbleContainer}>
+                <View style={[styles.speechBubbleTail, { borderRightColor: colors.bubbleBg[0] }]} />
+                <LinearGradient
+                  colors={colors.bubbleBg as unknown as [string, string, ...string[]]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.speechBubble, { borderColor: colors.bubbleBorder }]}
+                >
+                  <View style={styles.sparkleTopRight}>
+                    <Text style={[styles.sparkleText, { color: colors.sparkleColor }]}>✧</Text>
+                  </View>
+                  <Text style={[styles.speechBubbleText, { color: colors.textSecondary }]}>
+                    おかえりなさい！{"\n"}ログインしてね
+                  </Text>
+                </LinearGradient>
+              </View>
             </View>
-          </View>
+          ) : (
+            <View style={styles.simpleHeader}>
+              <Text style={[styles.simpleTitle, { color: colors.textPrimary }]}>
+                ログイン
+              </Text>
+              <Text style={[styles.simpleSubtitle, { color: colors.textSecondary }]}>
+                おかえりなさい
+              </Text>
+            </View>
+          )}
 
           {/* フォーム部分 */}
           <View style={styles.formContainer}>
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>メールアドレス</Text>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>メールアドレス</Text>
               <TextInput
                 autoCapitalize="none"
                 keyboardType="email-address"
                 placeholder="example@email.com"
-                placeholderTextColor="#A0AEC0"
+                placeholderTextColor={colors.textMuted}
                 value={email}
                 onChangeText={setEmail}
-                style={styles.input}
+                style={[styles.input, {
+                  backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                  borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                  color: colors.textPrimary,
+                }]}
               />
             </View>
 
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>パスワード</Text>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>パスワード</Text>
               <TextInput
                 secureTextEntry
                 placeholder="パスワードを入力"
-                placeholderTextColor="#A0AEC0"
+                placeholderTextColor={colors.textMuted}
                 value={password}
                 onChangeText={setPassword}
-                style={styles.input}
+                style={[styles.input, {
+                  backgroundColor: colors.showMascot ? "rgba(255, 255, 255, 0.9)" : "rgba(255, 255, 255, 0.1)",
+                  borderColor: colors.showMascot ? "rgba(255, 255, 255, 0.5)" : colors.cardBorder,
+                  color: colors.textPrimary,
+                }]}
               />
               <TouchableOpacity
                 onPress={() => router.push("/(auth)/reset-password")}
                 style={styles.forgotPasswordLink}
               >
-                <Text style={styles.forgotPasswordText}>
+                <Text style={[styles.forgotPasswordText, { color: colors.textMuted }]}>
                   パスワードをお忘れですか？
                 </Text>
               </TouchableOpacity>
@@ -132,12 +153,12 @@ export default function SignInScreen() {
               onPress={onSignIn}
               activeOpacity={0.8}
               disabled={busy || !isFormValid}
-              style={styles.buttonWrapper}
+              style={[styles.buttonWrapper, { shadowColor: colors.buttonShadow }]}
             >
               <LinearGradient
                 colors={
                   isFormValid && !busy
-                    ? ["#FF85A2", "#FFB6C1"]
+                    ? [colors.buttonGradientStart, colors.buttonGradientEnd]
                     : ["#A0AEC0", "#B8C5D0"]
                 }
                 start={{ x: 0, y: 0 }}
@@ -155,7 +176,7 @@ export default function SignInScreen() {
               onPress={() => router.push("/(auth)/signup")}
               style={styles.linkButton}
             >
-              <Text style={styles.linkText}>
+              <Text style={[styles.linkText, { color: colors.textSecondary }]}>
                 アカウントをお持ちでない方はこちら
               </Text>
             </TouchableOpacity>
@@ -200,7 +221,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 10,
     borderTopColor: "transparent",
     borderBottomColor: "transparent",
-    borderRightColor: "#FFF5F7",
     marginRight: -1,
   },
   speechBubble: {
@@ -208,10 +228,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 18,
     borderWidth: 2,
-    borderColor: "rgba(255, 182, 193, 0.5)",
-    shadowColor: "#FFB6C1",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
     position: "relative",
@@ -223,14 +242,25 @@ const styles = StyleSheet.create({
   },
   sparkleText: {
     fontSize: 14,
-    color: "#FFB6C1",
   },
   speechBubbleText: {
     fontSize: 14,
-    color: "#5A6B7C",
     fontWeight: "600",
     lineHeight: 21,
     letterSpacing: 0.2,
+  },
+  simpleHeader: {
+    alignItems: "center",
+    marginBottom: 40,
+    paddingHorizontal: 20,
+  },
+  simpleTitle: {
+    fontSize: 26,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  simpleSubtitle: {
+    fontSize: 15,
   },
   formContainer: {
     paddingHorizontal: 24,
@@ -242,18 +272,14 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#5A6B7C",
     marginLeft: 4,
   },
   input: {
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
     borderRadius: 16,
     paddingVertical: 14,
     paddingHorizontal: 16,
     fontSize: 16,
-    color: "#11181C",
     borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.5)",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -280,7 +306,6 @@ const styles = StyleSheet.create({
   buttonWrapper: {
     width: "100%",
     borderRadius: 25,
-    shadowColor: "#FF85A2",
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -303,7 +328,6 @@ const styles = StyleSheet.create({
   },
   linkText: {
     fontSize: 14,
-    color: "#5A6B7C",
     textDecorationLine: "underline",
   },
   forgotPasswordLink: {
@@ -312,6 +336,5 @@ const styles = StyleSheet.create({
   },
   forgotPasswordText: {
     fontSize: 13,
-    color: "#718096",
   },
 });
