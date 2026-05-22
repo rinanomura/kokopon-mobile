@@ -11,6 +11,7 @@ const MODELS = {
   classification: 'anthropic/claude-3.5-haiku',  // 分類用（高速・低コスト）
   chat: 'openai/gpt-5.2-chat',                   // チャット用（高品質な対話）
   audio: 'openai/gpt-audio-mini',                // 音声チャット用（コスト効率）
+  vision: 'anthropic/claude-sonnet-4.5', // Vision対応（食事写真分析）
 };
 
 // 分類結果の型定義
@@ -113,9 +114,26 @@ export async function classifyCalendarEvents(
     return [];
   }
 
+  // バッチサイズ（大量イベントでAI出力が切れるのを防ぐ）
+  const BATCH_SIZE = 10;
+  const allResults: ClassifiedEvent[] = [];
+
+  for (let i = 0; i < events.length; i += BATCH_SIZE) {
+    const batchEvents = events.slice(i, i + BATCH_SIZE);
+    const batchResults = await classifyBatch(batchEvents, i);
+    allResults.push(...batchResults);
+  }
+
+  return allResults;
+}
+
+async function classifyBatch(
+  events: Array<{ id: string; summary: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string } }>,
+  baseIndex: number
+): Promise<ClassifiedEvent[]> {
   // イベント情報を整形
   const eventList = events.map((event, index) => ({
-    index,
+    index: baseIndex + index,
     id: event.id,
     summary: event.summary || '(タイトルなし)',
     start: event.start.dateTime || event.start.date || '',
@@ -233,7 +251,12 @@ export function getStressColor(score: number): string {
 /**
  * ストレス分析用のシステムプロンプト
  */
-const ANALYSIS_SYSTEM_PROMPT = `あなたはストレスマネジメントの専門家です。ユーザーのカレンダーデータからストレス傾向を分析し、具体的で実用的なアドバイスを提供します。
+const ANALYSIS_SYSTEM_PROMPT = `あなたはストレスマネジメントの専門家です。ユーザーのカレンダーデータとヘルスケアデータ（心拍数・HRV・睡眠）からストレス傾向を分析し、具体的で実用的なアドバイスを提供します。
+
+三軸モデルについて:
+- Axis 01（覚醒度）: 瞑想セッションの前後で測定
+- Axis 02（反応性）: HRV（心拍変動）が指標。HRVが低いほどストレス反応性が高い
+- Axis 03（身体）: 睡眠時間が指標。睡眠不足は身体的ストレスの蓄積を示す
 
 分析結果は以下のJSON形式で返してください:
 {
@@ -295,6 +318,21 @@ export interface StressAnalysisInput {
     newStressScore?: number | null;
     oldParticipants?: string | null;
     newParticipants?: string | null;
+  }>;
+  // HealthKitデータ（HRV・心拍・睡眠・歩数・カロリー・運動・ワークアウト）
+  healthKit?: Array<{
+    date: string;
+    avgHeartRate?: number;
+    avgHRV?: number;
+    sleepHours?: number;
+    steps?: number;
+    activeCalories?: number;
+    exerciseMinutes?: number;
+    workouts?: Array<{
+      activityName: string;
+      durationMinutes: number;
+      totalEnergyBurned?: number;
+    }>;
   }>;
 }
 
@@ -373,6 +411,73 @@ export async function analyzeStressPatterns(
       }).join('\n')
     : 'なし';
 
+  // HealthKitデータのサマリー
+  const healthKitSummary = (() => {
+    if (!input.healthKit || input.healthKit.length === 0) return 'データなし';
+
+    const withHR = input.healthKit.filter(d => d.avgHeartRate !== undefined);
+    const withHRV = input.healthKit.filter(d => d.avgHRV !== undefined);
+    const withSleep = input.healthKit.filter(d => d.sleepHours !== undefined);
+
+    const lines: string[] = [];
+    if (withHR.length > 0) {
+      const avgHR = withHR.reduce((sum, d) => sum + d.avgHeartRate!, 0) / withHR.length;
+      lines.push(`- 平均心拍数: ${avgHR.toFixed(0)} bpm（${withHR.length}日分）`);
+    }
+    if (withHRV.length > 0) {
+      const avgHRV = withHRV.reduce((sum, d) => sum + d.avgHRV!, 0) / withHRV.length;
+      const lowHRVDays = withHRV.filter(d => d.avgHRV! < 30).length;
+      lines.push(`- 平均HRV(SDNN): ${avgHRV.toFixed(0)} ms（${withHRV.length}日分）`);
+      if (lowHRVDays > 0) {
+        lines.push(`  - HRV低下日（<30ms）: ${lowHRVDays}日 → ストレス反応性が高い可能性`);
+      }
+    }
+    if (withSleep.length > 0) {
+      const avgSleep = withSleep.reduce((sum, d) => sum + d.sleepHours!, 0) / withSleep.length;
+      const shortSleepDays = withSleep.filter(d => d.sleepHours! < 6).length;
+      lines.push(`- 平均睡眠時間: ${avgSleep.toFixed(1)}時間（${withSleep.length}日分）`);
+      if (shortSleepDays > 0) {
+        lines.push(`  - 短時間睡眠日（<6h）: ${shortSleepDays}日 → 身体的な負荷が高い可能性`);
+      }
+    }
+
+    const withSteps = input.healthKit.filter(d => d.steps !== undefined);
+    if (withSteps.length > 0) {
+      const avgSteps = withSteps.reduce((sum, d) => sum + d.steps!, 0) / withSteps.length;
+      lines.push(`- 平均歩数: ${Math.round(avgSteps).toLocaleString()}歩/日（${withSteps.length}日分）`);
+    }
+
+    const withCalories = input.healthKit.filter(d => d.activeCalories !== undefined);
+    if (withCalories.length > 0) {
+      const avgCal = withCalories.reduce((sum, d) => sum + d.activeCalories!, 0) / withCalories.length;
+      lines.push(`- 平均消費カロリー: ${Math.round(avgCal)} kcal/日（${withCalories.length}日分）`);
+    }
+
+    const withExercise = input.healthKit.filter(d => d.exerciseMinutes !== undefined);
+    if (withExercise.length > 0) {
+      const avgExercise = withExercise.reduce((sum, d) => sum + d.exerciseMinutes!, 0) / withExercise.length;
+      lines.push(`- 平均運動時間: ${Math.round(avgExercise)}分/日（${withExercise.length}日分）`);
+    }
+
+    const withWorkouts = input.healthKit.filter(d => d.workouts && d.workouts.length > 0);
+    if (withWorkouts.length > 0) {
+      const allWorkouts = withWorkouts.flatMap(d => d.workouts!);
+      const totalWorkouts = allWorkouts.length;
+      const typeCounts: Record<string, number> = {};
+      allWorkouts.forEach(w => {
+        typeCounts[w.activityName] = (typeCounts[w.activityName] || 0) + 1;
+      });
+      const topTypes = Object.entries(typeCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([name, count]) => `${name}(${count}回)`)
+        .join(', ');
+      lines.push(`- ワークアウト: ${totalWorkouts}回（${withWorkouts.length}日）/ 種類: ${topTypes}`);
+    }
+
+    return lines.length > 0 ? lines.join('\n') : 'データなし';
+  })();
+
   const prompt = `以下のストレスデータを分析してください:
 
 【期間】過去${input.totalDays}日間
@@ -408,6 +513,13 @@ ${chatSummary}
 【ユーザーによるスコア修正履歴】
 ${changeLogSummary}
 
+【ヘルスケアデータ（Apple HealthKit）】
+${healthKitSummary}
+※HRV（心拍変動）が低い日はストレス反応性が高い状態（三軸モデル Axis 02）を示します。
+※睡眠時間が短い日は身体的な負荷が高い状態（三軸モデル Axis 03）を示します。
+※歩数・消費カロリー・運動時間・ワークアウトは身体活動レベルを示します。運動とストレス軽減の相関があれば言及してください。
+※ヘルスデータとカレンダーイベントのストレススコアの相関があれば、具体的に言及してください。
+
 ※チャット履歴や修正履歴から、ユーザーの実際の感じ方や傾向を読み取ってください。AIの判定とユーザーの感覚のずれがあれば、それも分析に含めてください。
 
 JSON形式でのみ回答してください。`;
@@ -440,11 +552,92 @@ function getDefaultAnalysis(): StressAnalysisResult {
 }
 
 // ========================================
+// 身体天気予報AI生成
+// ========================================
+
+const BODY_FORECAST_SYSTEM_PROMPT = `あなたは環境医学と神経科学に詳しいパーソナルアドバイザーです。
+ユーザーの身体データ・環境データ・仕事/予定・食事・瞑想履歴から、
+「最近の傾向」と「今日特に気をつけること」を分析的に伝えてください。
+
+【summaryの書き方】
+- 「最近、〜が続いています」「ここ数日、〜の傾向です」など傾向から入る
+- そこに今日の環境（天気・気圧）を掛け合わせて「今日は〜に気をつけてください」と注意喚起
+- 仕事のストレスが高い日が続いていれば言及する
+- 睡眠不足が続いていれば言及する
+- 具体的な数値を入れて根拠を示す
+
+【summaryの例】
+- 「ここ数日、高ストレスの仕事が続き睡眠も5時間台です。今日は気圧上昇で回復傾向ですが、蓄積疲労に注意してください」
+- 「最近、体が重いと感じるセッションが続いています。低気圧の接近もあり、炎症反応が出やすい状態です」
+- 「睡眠・食事ともに安定しています。気圧も穏やかで、身体のコンディションは良好です」
+
+【recommendationの書き方】
+- 現在時刻以降にできることだけを提案する（朝なら朝〜夜、夜なら今夜〜就寝前のみ）
+- 今日具体的にすべきことを2〜3個、箇条書き風に「、」区切りで並べる
+- 最後は「がおすすめです」で締める
+- 例（朝）: 「午前中の軽いストレッチ、会議前の深呼吸、22時までの就寝がおすすめです」
+- 例（夜）: 「ぬるめのお風呂、スマホを置いて深呼吸、早めの就寝がおすすめです」
+
+【luckyItemの書き方】
+- 現在の時間帯に合ったアイテムを提案する（朝なら朝食向き、夜なら夕食・リラックス向き）
+- 今日の身体状態・環境に合わせた「おすすめの食べ物・飲み物・行動」を1つ提案
+- 科学的な根拠があるもの（例: 低気圧→マグネシウム豊富なバナナ、睡眠不足→トリプトファン豊富な豆乳）
+- アイテム名は短く（10文字以内）、理由も短く（20文字以内）
+- 楽しい気持ちになるようなトーンで
+- 例: {"item": "ダークチョコ", "reason": "BDNFを増やして脳を元気に", "emoji": "🍫"}
+- 例: {"item": "バナナ", "reason": "マグネシウムで自律神経を安定", "emoji": "🍌"}
+- 例: {"item": "緑茶", "reason": "テアニンでリラックス集中", "emoji": "🍵"}
+- 例: {"item": "15分の散歩", "reason": "セロトニン生成を促進", "emoji": "🚶"}
+
+【meditationTipの書き方】
+- 今日の身体・環境状態に合わせた瞑想時の意識ポイントを1つ提案
+- 具体的で実践しやすい内容（例: 「吐く息を長めに」「身体の重さをそのまま観察」）
+- 30文字以内で簡潔に
+- 例: 「吐く息を倍の長さにして副交感神経を優位に」
+- 例: 「身体の重さを否定せず、ただ観察してみましょう」
+- 例: 「呼吸の温度の変化に意識を向けてみましょう」
+
+【ルール】
+- summaryは2〜3文、120文字以内
+- recommendationは1文、80文字以内（項目は「、」区切り）
+- luckyItemは必ず返す
+- meditationTipは必ず返す
+- 科学的根拠のある内容のみ。占いにしない
+- データがない項目は触れない
+- 日本語で回答
+
+【回答形式】
+必ず以下のJSON形式のみで返してください。
+{"summary": "...", "recommendation": "...", "luckyItem": {"item": "...", "reason": "...", "emoji": "..."}, "meditationTip": "..."}`;
+
+export interface BodyForecastAIResult {
+  summary: string;
+  recommendation: string;
+  luckyItem?: { item: string; reason: string; emoji: string };
+  meditationTip?: string;
+}
+
+export async function generateBodyForecastAI(
+  context: string
+): Promise<BodyForecastAIResult | null> {
+  try {
+    const result = await callOpenRouter(context, BODY_FORECAST_SYSTEM_PROMPT, 'classification');
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+  } catch (error) {
+    console.error('generateBodyForecastAI error:', error);
+  }
+  return null;
+}
+
+// ========================================
 // マインドフルコメント生成（りなわんの一言）
 // ========================================
 
 const MINDFUL_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」というマインドフルネスの案内役キャラクターです。
-ユーザーが入力した3つの心身状態の値をもとに、やさしく寄り添う一言を生成してください。
+ユーザーが入力した3つの心身状態の値と、今日の環境データをもとに、やさしく寄り添う一言を生成してください。
 
 【りなわんのキャラクター】
 - 一人称は「ボク」
@@ -454,17 +647,21 @@ const MINDFUL_COMMENT_SYSTEM_PROMPT = `あなたは「りなわん」という�
 【値の意味（1〜3）】
 - body: 身体の感じ（1=軽い、2=ふつう、3=重い）
 - mind: 心の感じ（1=軽い、2=ふつう、3=重い）
-- reactivity: 心の反応しやすさ（1=揺れて戻らない、2=揺れて戻る、3=安定している）
+- breath: 呼吸の状態
+
+【環境データがある場合】
+- 天気や気圧の情報を自然に織り込む（「低気圧だから体が重く感じるのかも」など）
+- 環境データは理由づけのヒントとして使い、押し付けない
+- 環境データがない場合は心身状態だけで返答する
 
 【ルール】
-- 1〜2文、30文字以内
-- アドバイスではなく、気持ちへの寄り添い
-- 選んだ状態をやさしくケアする一言
+- 1〜2文、50文字以内
+- アドバイスではなく、気持ちへの寄り添い + 環境への気づき
 - 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は使わない
 - やさしい日常の言葉だけを使う`;
 
 const MINDFUL_COMMENT_SIMPLE_SYSTEM_PROMPT = `あなたはマインドフルネスの案内役です。
-ユーザーが入力した3つの心身状態の値をもとに、やさしく寄り添う一言を生成してください。
+ユーザーが入力した3つの心身状態の値と、今日の環境データをもとに、やさしく寄り添う一言を生成してください。
 
 【口調】
 - キャラクター名は名乗らない
@@ -474,12 +671,15 @@ const MINDFUL_COMMENT_SIMPLE_SYSTEM_PROMPT = `あなたはマインドフルネ�
 【値の意味（1〜3）】
 - body: 身体の感じ（1=軽い、2=ふつう、3=重い）
 - mind: 心の感じ（1=軽い、2=ふつう、3=重い）
-- reactivity: 心の反応しやすさ（1=揺れて戻らない、2=揺れて戻る、3=安定している）
+- breath: 呼吸の状態
+
+【環境データがある場合】
+- 天気や気圧の情報を自然に織り込む
+- 環境データは理由づけのヒントとして使い、押し付けない
 
 【ルール】
-- 1〜2文、30文字以内
-- アドバイスではなく、気持ちへの寄り添い
-- 選んだ状態をやさしくケアする一言
+- 1〜2文、50文字以内
+- アドバイスではなく、気持ちへの寄り添い + 環境への気づき
 - 専門用語（グラウンディング、マインドフルネス、ボディスキャン等）は使わない
 - やさしい日常の言葉だけを使う`;
 
@@ -500,20 +700,24 @@ const MINDFUL_COMMENT_SIMPLE_FALLBACK_MESSAGES = [
 ];
 
 /**
- * 3つの選択値から一言コメントを生成
+ * 3つの選択値から一言コメントを生成（環境コンテキスト対応）
  */
 export async function generateMindfulComment(params: {
   body: number;
   mind: number;
-  reactivity: number;
+  breath: number;
   designTheme?: 'cute' | 'simple';
+  environmentContext?: string; // 環境データの要約テキスト
 }): Promise<string> {
   const isSimple = params.designTheme === 'simple';
   const systemPrompt = isSimple ? MINDFUL_COMMENT_SIMPLE_SYSTEM_PROMPT : MINDFUL_COMMENT_SYSTEM_PROMPT;
   const fallbacks = isSimple ? MINDFUL_COMMENT_SIMPLE_FALLBACK_MESSAGES : MINDFUL_COMMENT_FALLBACK_MESSAGES;
 
   try {
-    const prompt = `body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}`;
+    let prompt = `body=${params.body}, mind=${params.mind}, breath=${params.breath}`;
+    if (params.environmentContext) {
+      prompt += `\n\n【今日の環境】\n${params.environmentContext}`;
+    }
     const result = await callOpenRouter(prompt, systemPrompt, 'classification');
     return result.trim().replace(/^[「『]|[」』]$/g, '');
   } catch (error) {
@@ -558,15 +762,33 @@ const AFTER_COMMENT_SIMPLE_SYSTEM_PROMPT = `あなたはマインドフルネス
 export async function generateAfterComment(params: {
   body: number;
   mind: number;
-  reactivity: number;
+  breath: number;
   meditationGuideId: string;
   designTheme?: 'cute' | 'simple';
+  reflection?: {
+    breathing?: string;
+    body?: string;
+    mind?: string;
+  };
 }): Promise<string> {
   const isSimple = params.designTheme === 'simple';
   const systemPrompt = isSimple ? AFTER_COMMENT_SIMPLE_SYSTEM_PROMPT : AFTER_COMMENT_SYSTEM_PROMPT;
 
   try {
-    const prompt = `瞑想前の状態: body=${params.body}, mind=${params.mind}, reactivity=${params.reactivity}\n実施した瞑想タイプ: ${params.meditationGuideId}\n\nトレーニングを終えたユーザーへのやさしい一言を生成してください。`;
+    const reflectionLabels: Record<string, string> = {
+      good: 'よかった',
+      neutral: 'ふつう/変わらない',
+      notSure: 'よくわからない',
+    };
+    let reflectionText = '';
+    if (params.reflection?.breathing || params.reflection?.body || params.reflection?.mind) {
+      const parts: string[] = [];
+      if (params.reflection.breathing) parts.push(`呼吸: ${reflectionLabels[params.reflection.breathing] ?? params.reflection.breathing}`);
+      if (params.reflection.body) parts.push(`体: ${reflectionLabels[params.reflection.body] ?? params.reflection.body}`);
+      if (params.reflection.mind) parts.push(`気持ち: ${reflectionLabels[params.reflection.mind] ?? params.reflection.mind}`);
+      reflectionText = `\n瞑想後の振り返り: ${parts.join(', ')}`;
+    }
+    const prompt = `瞑想前の状態: body=${params.body}, mind=${params.mind}, breath=${params.breath}\n実施した瞑想タイプ: ${params.meditationGuideId}${reflectionText}\n\nトレーニングを終えたユーザーへのやさしい一言を生成してください。`;
     const result = await callOpenRouter(prompt, systemPrompt, 'classification');
     return result.trim().replace(/^[「『]|[」』]$/g, '');
   } catch (error) {
@@ -913,4 +1135,131 @@ export async function chatWithVoiceResponse(
   const text = data.choices?.[0]?.message?.content || '';
 
   return { audioBase64: '', text };
+}
+
+// ========================================
+// 食事写真AI分析機能
+// ========================================
+
+/**
+ * 食事写真分析結果の型定義
+ */
+export interface MealAnalysis {
+  mealName: string;           // 料理名
+  bloodSugarStability: number; // 血糖安定度 1-5
+  antiInflammation: number;    // 抗炎症スコア 1-5
+  bdnfSupport: number;         // BDNF支援 1-5
+  serotoninSupply: number;     // セロトニン原料 1-5
+  hpaAxisImpact: number;       // HPA軸への影響 1-5 (高いほど良い=刺激が少ない)
+  overallScore: number;        // 総合スコア 1-5
+  comment: string;             // 一言コメント
+  detectedFoods: string[];     // 検出された食材
+}
+
+/**
+ * 食事写真分析用のシステムプロンプト
+ */
+const MEAL_ANALYSIS_SYSTEM_PROMPT = `あなたは神経科学に基づく食事分析の専門家です。写真から食事を分析し、メンタルヘルスへの影響を評価します。
+
+以下の神経科学フレームワークに基づいて評価してください：
+
+【評価軸】
+1. 血糖安定度 (bloodSugarStability): 1-5
+   - 低GI食品が多いほど高スコア。血糖の急上昇・急降下はHPA軸を発火させコルチゾールを上昇させる
+   - 5: 玄米、全粒粉、野菜中心（低GI）
+   - 1: 白米大盛り、菓子パン、砂糖多量（高GI）
+
+2. 抗炎症スコア (antiInflammation): 1-5
+   - 抗炎症食品が多いほど高スコア。慢性炎症は扁桃体の閾値を下げ前頭前野を疲弊させる
+   - 5: 青魚、野菜、オリーブオイル、ナッツ
+   - 1: 超加工食品、揚げ物多量、トランス脂肪酸
+
+3. BDNF支援 (bdnfSupport): 1-5
+   - BDNF産生を促進する栄養素（オメガ3、ポリフェノール等）の含有量
+   - 5: サーモン、ブルーベリー、緑茶、ダークチョコレート
+   - 1: 栄養素の少ない加工食品
+
+4. セロトニン原料 (serotoninSupply): 1-5
+   - トリプトファン（セロトニン前駆体）と腸内環境改善食品の含有量
+   - 5: 大豆製品、バナナ、発酵食品、卵
+   - 1: トリプトファン源がほぼない食事
+
+5. HPA軸安定度 (hpaAxisImpact): 1-5
+   - 高いほど良い（HPA軸への刺激が少ない）
+   - 5: バランスの良い食事、カフェイン少
+   - 1: カフェイン過多、血糖乱高下を招く食事
+
+【回答形式】
+必ず以下のJSON形式のみで回答してください。説明文は不要です。
+{
+  "mealName": "料理名（日本語）",
+  "bloodSugarStability": 数値(1-5),
+  "antiInflammation": 数値(1-5),
+  "bdnfSupport": 数値(1-5),
+  "serotoninSupply": 数値(1-5),
+  "hpaAxisImpact": 数値(1-5),
+  "overallScore": 数値(1-5),
+  "comment": "一言コメント（神経科学的な観点から、日本語で、50文字以内）",
+  "detectedFoods": ["食材1", "食材2", ...]
+}
+
+overallScoreは5つのスコアの加重平均を目安に算出してください。`;
+
+/**
+ * 食事写真をAIで分析する
+ */
+export async function analyzeMealPhoto(imageBase64: string): Promise<MealAnalysis> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://kokopon.app',
+      'X-Title': 'Kokopon Mobile',
+    },
+    body: JSON.stringify({
+      model: MODELS.vision,
+      messages: [
+        { role: 'system', content: MEAL_ANALYSIS_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${imageBase64}`,
+              },
+            },
+            {
+              type: 'text',
+              text: 'この食事を分析してください。',
+            },
+          ],
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenRouter Vision API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0]?.message?.content || '';
+
+  // JSONを抽出
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.error('Failed to parse meal analysis response:', content);
+    throw new Error('食事の分析に失敗しました');
+  }
+
+  return JSON.parse(jsonMatch[0]) as MealAnalysis;
 }

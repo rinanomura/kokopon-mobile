@@ -30,6 +30,9 @@ const TIME_OPTIONS: TimeOption[] = [
   { minutes: 1, label: '1分' },
   { minutes: 5, label: '5分' },
   { minutes: 10, label: '10分' },
+  { minutes: 15, label: '15分' },
+  { minutes: 20, label: '20分' },
+  { minutes: 25, label: '25分' },
 ];
 
 const MODE_OPTIONS: ModeOption[] = [
@@ -60,7 +63,10 @@ export default function TimeSelectScreen() {
   const params = useLocalSearchParams<{
     bodyValue: string;
     mindValue: string;
-    reactivityValue: string;
+    breathValue: string;
+    bodyLabel: string;
+    mindLabel: string;
+    breathLabel: string;
   }>();
 
   const colors = useThemeColors();
@@ -75,7 +81,10 @@ export default function TimeSelectScreen() {
       params: {
         bodyValue: params.bodyValue,
         mindValue: params.mindValue,
-        reactivityValue: params.reactivityValue,
+        breathValue: params.breathValue,
+        bodyLabel: params.bodyLabel,
+        mindLabel: params.mindLabel,
+        breathLabel: params.breathLabel,
         duration: selectedTime.toString(),
         mode: selectedMode,
       },
@@ -245,17 +254,19 @@ const styles = StyleSheet.create({
   // 時間選択
   timeSelector: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   timeButton: {
-    flex: 1,
-    paddingVertical: 20,
+    width: '30.5%',
+    flexGrow: 1,
+    paddingVertical: 16,
     borderRadius: 16,
     borderWidth: 2,
     alignItems: 'center',
   },
   timeButtonText: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
   },
 

@@ -1,6 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // OAuth完了時にブラウザを閉じる
 WebBrowser.maybeCompleteAuthSession();
@@ -66,7 +67,8 @@ export function useGoogleAuth() {
       responseType: AuthSession.ResponseType.Code,
       usePKCE: true,
       extraParams: {
-        prompt: 'select_account', // 毎回アカウント選択画面を表示
+        prompt: 'consent', // 同意画面を表示してrefresh_tokenを取得
+        access_type: 'offline', // リフレッシュトークンを取得
       },
     },
     discovery
@@ -110,6 +112,12 @@ export async function exchangeCodeForToken(
       tokenRequest,
       discovery
     );
+
+    // リフレッシュトークンを保存
+    if (tokenResponse.refreshToken) {
+      await AsyncStorage.setItem('googleRefreshToken', tokenResponse.refreshToken);
+    }
+
     return tokenResponse.accessToken;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -119,6 +127,52 @@ export async function exchangeCodeForToken(
       'OAuth Debug',
       `ClientID: ${clientId?.substring(0, 20)}...\nRedirectURI: ${redirectUri}\nError: ${errorMsg}`
     );
+    return null;
+  }
+}
+
+/**
+ * リフレッシュトークンでアクセストークンを更新
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const refreshToken = await AsyncStorage.getItem('googleRefreshToken');
+    if (!refreshToken) return null;
+
+    const clientId = getClientId();
+    const body: Record<string, string> = {
+      client_id: clientId,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    };
+
+    // Web/Androidの場合のみclientSecretを追加
+    if (Platform.OS !== 'ios') {
+      body.client_secret = GOOGLE_WEB_CLIENT_SECRET;
+    }
+
+    const response = await fetch(discovery.tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString(),
+    });
+
+    if (!response.ok) {
+      console.error('Token refresh failed:', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const newToken = data.access_token;
+
+    // 新しいトークンを保存
+    if (newToken) {
+      await AsyncStorage.setItem('googleAccessToken', newToken);
+    }
+
+    return newToken;
+  } catch (error) {
+    console.error('Token refresh error:', error);
     return null;
   }
 }
@@ -157,21 +211,33 @@ export interface CalendarEvent {
 export async function fetchCalendarList(
   accessToken: string
 ): Promise<CalendarInfo[]> {
-  try {
+  const tryFetch = async (token: string) => {
     const response = await fetch(
       'https://www.googleapis.com/calendar/v3/users/me/calendarList',
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
-
     if (!response.ok) {
-      throw new Error(`Calendar List API error: ${response.status}`);
+      throw new Error(`AUTH_EXPIRED:${response.status}`);
     }
+    return response.json();
+  };
 
-    const data = await response.json();
+  try {
+    let data;
+    try {
+      data = await tryFetch(accessToken);
+    } catch (err: any) {
+      if (err.message?.includes('AUTH_EXPIRED')) {
+        const newToken = await refreshAccessToken();
+        if (newToken) {
+          data = await tryFetch(newToken);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
     return (data.items || []).map((item: any) => ({
       id: item.id,
       summary: item.summary || item.id,
@@ -195,7 +261,7 @@ export async function fetchCalendarEvents(
   timeMax: Date,
   calendarIds?: string[]
 ): Promise<CalendarEvent[]> {
-  try {
+  const fetchWithToken = async (token: string) => {
     const params = new URLSearchParams({
       timeMin: timeMin.toISOString(),
       timeMax: timeMax.toISOString(),
@@ -204,30 +270,25 @@ export async function fetchCalendarEvents(
       maxResults: '100',
     });
 
-    // カレンダーIDが指定されていなければ primary のみ
     const idsToFetch = calendarIds && calendarIds.length > 0
       ? calendarIds
       : ['primary'];
 
-    // 各カレンダーからイベントを並列取得
     const allEventsPromises = idsToFetch.map(async (calendarId) => {
       const encodedCalendarId = encodeURIComponent(calendarId);
       const response = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/${encodedCalendarId}/events?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       if (!response.ok) {
-        console.warn(`Calendar API error for ${calendarId}: ${response.status}`);
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`AUTH_EXPIRED:${response.status}`);
+        }
         return [];
       }
 
       const data = await response.json();
-      // 各イベントにcalendarIdを付与し、summaryがない場合はフォールバック
       return (data.items || []).map((event: CalendarEvent) => ({
         ...event,
         summary: event.summary || '(予定あり)',
@@ -238,7 +299,6 @@ export async function fetchCalendarEvents(
     const allEventsArrays = await Promise.all(allEventsPromises);
     const allEvents = allEventsArrays.flat();
 
-    // 開始時刻でソート
     allEvents.sort((a, b) => {
       const aTime = a.start.dateTime || a.start.date || '';
       const bTime = b.start.dateTime || b.start.date || '';
@@ -246,7 +306,21 @@ export async function fetchCalendarEvents(
     });
 
     return allEvents;
-  } catch (error) {
+  };
+
+  try {
+    return await fetchWithToken(accessToken);
+  } catch (error: any) {
+    if (error.message?.includes('AUTH_EXPIRED')) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        try {
+          return await fetchWithToken(newToken);
+        } catch {
+          console.error('Calendar fetch failed after token refresh');
+        }
+      }
+    }
     console.error('Calendar fetch error:', error);
     return [];
   }

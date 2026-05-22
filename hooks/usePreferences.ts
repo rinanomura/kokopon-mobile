@@ -8,6 +8,14 @@ export type GuideMode = 'timer' | 'ambient' | 'guided';
 export type AmbientSound = 'birds' | 'river' | 'rain' | 'wave' | 'bonfire' | 'singing_bowls';
 export type DesignTheme = 'cute' | 'simple';
 
+// 呼吸アニメーションのタイミング設定
+export type BreathTiming = {
+  expandSec: number;   // 膨らむ秒数
+  holdTopSec: number;  // 大きい状態で止まる秒数
+  shrinkSec: number;   // しぼむ秒数
+  holdBottomSec: number; // 小さい状態で止まる秒数
+};
+
 // 通知時刻の型（lib/notifications.tsと同じ）
 export type NotificationTime = {
   id: string;
@@ -24,6 +32,7 @@ export const STORAGE_KEYS = {
   AMBIENT_SOUND: 'pref_ambient_sound',
   NOTIFICATION_TIMES: 'pref_notification_times',
   DESIGN_THEME: 'pref_design_theme',
+  BREATH_TIMING: 'pref_breath_timing',
 } as const;
 
 // デフォルト値
@@ -33,6 +42,12 @@ export const DEFAULT_GUIDE_MODE: GuideMode = 'timer';
 export const DEFAULT_AMBIENT_SOUND: AmbientSound = 'birds';
 export const DEFAULT_NOTIFICATION_TIMES: NotificationTime[] = [];
 export const DEFAULT_DESIGN_THEME: DesignTheme = 'cute';
+export const DEFAULT_BREATH_TIMING: BreathTiming = {
+  expandSec: 4,
+  holdTopSec: 1,
+  shrinkSec: 4,
+  holdBottomSec: 1,
+};
 
 /**
  * 設定を参照・更新するフック

@@ -6,8 +6,6 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
-  Switch,
-  ActivityIndicator,
   Modal,
   StatusBar,
 } from 'react-native';
@@ -20,12 +18,6 @@ import { usePreferences, NotificationTime, DesignTheme } from '@/hooks/usePrefer
 import { useThemeColors } from '@/hooks/useThemeColors';
 import { resetClient } from '@/lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  useGoogleAuth,
-  exchangeCodeForToken,
-  fetchCalendarList,
-  CalendarInfo,
-} from '@/lib/googleCalendar';
 import {
   requestNotificationPermission,
   checkNotificationPermission,
@@ -54,6 +46,8 @@ export default function SettingsScreen() {
     removeNotificationTime,
     designTheme,
     setDesignTheme,
+    breathTiming,
+    setBreathTiming,
   } = usePreferences();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
@@ -73,14 +67,8 @@ export default function SettingsScreen() {
     loadUserInfo();
   }, []);
 
-  // Googleカレンダー連携
-  const { request, response, promptAsync, redirectUri } = useGoogleAuth();
-
-  const [calendars, setCalendars] = useState<CalendarInfo[]>([]);
-  const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
+  // リマインダーモード: 'auto' | 'manual' | 'off'
+  const [reminderMode, setReminderMode] = useState<'auto' | 'manual' | 'off'>('auto');
 
   // 通知関連
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -201,143 +189,59 @@ export default function SettingsScreen() {
     return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
   };
 
-  /**
-   * 保存済みのカレンダー情報を読み込む
-   */
+  // リマインダーモード初期化（既存データから判定）
   useEffect(() => {
-    const loadCalendarSettings = async () => {
-      try {
-        const savedToken = await AsyncStorage.getItem('googleAccessToken');
-        const savedCalendars = await AsyncStorage.getItem('googleCalendars');
-        const savedCalendarIds = await AsyncStorage.getItem('selectedCalendarIds');
-
-        if (savedToken && savedCalendars) {
-          setCalendars(JSON.parse(savedCalendars));
-          setIsConnected(true);
+    if (notificationTimes.length === 0) {
+      // 初回は自動設定をデフォルトでオン
+      (async () => {
+        const stored = await AsyncStorage.getItem('pref_reminder_mode');
+        if (stored === 'manual' || stored === 'off') {
+          setReminderMode(stored);
+        } else {
+          // 初回 or auto: 自動設定（20:00）
+          setReminderMode('auto');
+          if (notificationTimes.length === 0 && stored !== 'auto') {
+            await addNotificationTime(20, 0);
+            await AsyncStorage.setItem('pref_reminder_mode', 'auto');
+          }
         }
-
-        if (savedCalendarIds) {
-          setSelectedCalendarIds(JSON.parse(savedCalendarIds));
+      })();
+    } else {
+      AsyncStorage.getItem('pref_reminder_mode').then(stored => {
+        if (stored === 'manual' || stored === 'off' || stored === 'auto') {
+          setReminderMode(stored);
         }
-      } catch (error) {
-        console.error('Load calendar settings error:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadCalendarSettings();
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
-   * OAuth レスポンス処理
+   * リマインダーモード変更
    */
-  useEffect(() => {
-    if (response?.type === 'success' && response.params.code && request?.codeVerifier) {
-      handleAuthSuccess(response.params.code, request.codeVerifier);
-    }
-  }, [response]);
+  const handleReminderModeChange = async (mode: 'auto' | 'manual' | 'off') => {
+    setReminderMode(mode);
+    await AsyncStorage.setItem('pref_reminder_mode', mode);
 
-  /**
-   * 認証成功時の処理
-   */
-  const handleAuthSuccess = async (code: string, codeVerifier: string) => {
-    setConnecting(true);
-    try {
-      const token = await exchangeCodeForToken(code, codeVerifier, redirectUri);
-      if (token) {
-        // アクセストークンを保存
-        await AsyncStorage.setItem('googleAccessToken', token);
-
-        // カレンダー一覧を取得
-        const calendarList = await fetchCalendarList(token);
-        setCalendars(calendarList);
-        setIsConnected(true);
-
-        // カレンダー一覧を保存
-        await AsyncStorage.setItem('googleCalendars', JSON.stringify(calendarList));
-
-        // 初回はすべてのカレンダーを選択
-        const allIds = calendarList.map(c => c.id);
-        setSelectedCalendarIds(allIds);
-        await AsyncStorage.setItem('selectedCalendarIds', JSON.stringify(allIds));
-
-        Alert.alert('完了', 'Googleカレンダーと連携しました');
-      } else {
-        Alert.alert('エラー', '認証に失敗しました');
+    if (mode === 'auto') {
+      // 既存を全削除して20:00を設定
+      for (const t of notificationTimes) {
+        await cancelNotification(t.id);
+        await removeNotificationTime(t.id);
       }
-    } catch (error) {
-      console.error('Auth error:', error);
-      Alert.alert('エラー', '認証処理中にエラーが発生しました');
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  /**
-   * Google連携ボタン
-   */
-  const handleConnect = useCallback(() => {
-    promptAsync();
-  }, [promptAsync]);
-
-  /**
-   * カレンダーのオン/オフを切り替え
-   */
-  const toggleCalendar = async (calendarId: string) => {
-    let newSelectedIds: string[];
-
-    if (selectedCalendarIds.includes(calendarId)) {
-      // 少なくとも1つは選択されている必要がある
-      if (selectedCalendarIds.length === 1) {
-        Alert.alert('エラー', '少なくとも1つのカレンダーを選択してください');
-        return;
+      await addNotificationTime(20, 0);
+    } else if (mode === 'manual') {
+      // 既存がなければ20:00をデフォルトで1つ追加
+      if (notificationTimes.length === 0) {
+        await addNotificationTime(20, 0);
       }
-      newSelectedIds = selectedCalendarIds.filter(id => id !== calendarId);
     } else {
-      newSelectedIds = [...selectedCalendarIds, calendarId];
+      // off: 全削除
+      for (const t of notificationTimes) {
+        await cancelNotification(t.id);
+        await removeNotificationTime(t.id);
+      }
     }
-
-    setSelectedCalendarIds(newSelectedIds);
-    await AsyncStorage.setItem('selectedCalendarIds', JSON.stringify(newSelectedIds));
-  };
-
-  /**
-   * 連携を解除
-   */
-  const handleDisconnect = () => {
-    Alert.alert(
-      'カレンダー連携を解除',
-      'Googleカレンダーとの連携を解除しますか？',
-      [
-        { text: 'キャンセル', style: 'cancel' },
-        {
-          text: '解除',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await AsyncStorage.removeItem('googleAccessToken');
-              await AsyncStorage.removeItem('googleCalendars');
-              await AsyncStorage.removeItem('selectedCalendarIds');
-              setCalendars([]);
-              setSelectedCalendarIds([]);
-              setIsConnected(false);
-              Alert.alert('完了', '連携を解除しました');
-            } catch (error) {
-              console.error('Disconnect error:', error);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  /**
-   * 再接続（トークンを更新）
-   */
-  const handleReconnect = () => {
-    console.log('handleReconnect called, request:', !!request);
-    promptAsync();
   };
 
   const handleSignOut = async () => {
@@ -369,7 +273,7 @@ export default function SettingsScreen() {
     if (setAlternateAppIcon) {
       try {
         if (theme === 'simple') {
-          await setAlternateAppIcon('icon-simple-mode');
+          await setAlternateAppIcon('IconSimpleMode');
         } else {
           await setAlternateAppIcon(null);
         }
@@ -383,6 +287,17 @@ export default function SettingsScreen() {
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.gradient}>
       <StatusBar barStyle={colors.statusBarStyle} />
       <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* 閉じるボタン */}
+        <View style={styles.closeBar}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            activeOpacity={0.7}
+            style={styles.closeButton}
+          >
+            <Ionicons name="close" size={24} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
         {/* プロフィールヘッダー */}
         <View style={[styles.profileHeader, { backgroundColor: colors.card }]}>
           <View style={[styles.profileIconContainer, { backgroundColor: colors.accent + '20' }]}>
@@ -438,169 +353,118 @@ export default function SettingsScreen() {
             <Text style={[styles.sectionHint, { color: colors.textMuted }]}>アプリ全体のデザインが変わります</Text>
           </View>
 
-          {/* 瞑想リマインダーセクション */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>瞑想リマインダー</Text>
-              <TouchableOpacity
-                style={styles.addButton}
-                onPress={handleAddNotification}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="add-circle" size={28} color="#805AD5" />
-              </TouchableOpacity>
-            </View>
-
-            {notificationTimes.length === 0 ? (
-              <View style={styles.emptyNotification}>
-                <Ionicons name="notifications-off-outline" size={32} color="#A0AEC0" />
-                <Text style={styles.emptyNotificationText}>
-                  リマインダーが設定されていません
-                </Text>
-                <TouchableOpacity
-                  style={styles.addFirstButton}
-                  onPress={handleAddNotification}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.addFirstButtonText}>追加する</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                {notificationTimes.map((notification) => (
-                  <View key={notification.id} style={styles.notificationItem}>
+          {/* 呼吸リズム設定（シンプルモードのみ） */}
+          {designTheme === 'simple' && (
+            <View style={[styles.section, { backgroundColor: colors.card }]}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>呼吸リズム</Text>
+              <Text style={[styles.sectionHint, { color: colors.textMuted, marginBottom: 12 }]}>
+                ホーム画面の光のアニメーション（秒）
+              </Text>
+              {([
+                { key: 'expandSec' as const, label: 'ふくらむ' },
+                { key: 'holdTopSec' as const, label: '大きく止まる' },
+                { key: 'shrinkSec' as const, label: 'しぼむ' },
+                { key: 'holdBottomSec' as const, label: '小さく止まる' },
+              ]).map(({ key, label }) => (
+                <View key={key} style={styles.breathRow}>
+                  <Text style={[styles.breathLabel, { color: colors.textSecondary }]}>{label}</Text>
+                  <View style={styles.breathStepper}>
                     <TouchableOpacity
-                      style={styles.notificationTimeContainer}
-                      onPress={() => handleEditNotification(notification)}
+                      onPress={() => {
+                        if (breathTiming[key] > (key.startsWith('hold') ? 0 : 1)) {
+                          setBreathTiming({ ...breathTiming, [key]: breathTiming[key] - 1 });
+                        }
+                      }}
+                      style={[styles.breathStepButton, { borderColor: colors.cardBorder }]}
                       activeOpacity={0.7}
                     >
-                      <Ionicons
-                        name="time-outline"
-                        size={20}
-                        color={notification.enabled ? '#805AD5' : '#A0AEC0'}
-                      />
-                      <Text style={[
-                        styles.notificationTimeText,
-                        !notification.enabled && styles.notificationTimeTextDisabled,
-                      ]}>
-                        {formatTime(notification.hour, notification.minute)}
-                      </Text>
+                      <Ionicons name="remove" size={18} color={colors.textSecondary} />
                     </TouchableOpacity>
-
-                    <View style={styles.notificationActions}>
-                      <Switch
-                        value={notification.enabled}
-                        onValueChange={(enabled) => handleToggleNotification(notification.id, enabled)}
-                        trackColor={{ false: '#E2E8F0', true: '#9F7AEA' }}
-                        thumbColor={notification.enabled ? '#805AD5' : '#FFF'}
-                      />
-                      <TouchableOpacity
-                        style={styles.deleteButton}
-                        onPress={() => handleDeleteNotification(notification.id)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="trash-outline" size={20} color="#E53E3E" />
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={[styles.breathValue, { color: colors.textPrimary }]}>
+                      {breathTiming[key]}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (breathTiming[key] < 10) {
+                          setBreathTiming({ ...breathTiming, [key]: breathTiming[key] + 1 });
+                        }
+                      }}
+                      style={[styles.breathStepButton, { borderColor: colors.cardBorder }]}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="add" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
                   </View>
-                ))}
-              </>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* 瞑想リマインダーセクション */}
+          <View style={[styles.section, { backgroundColor: colors.card }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>瞑想リマインダー</Text>
+
+            {/* 3択セレクター */}
+            <View style={styles.reminderSelector}>
+              {([
+                { id: 'auto' as const, label: '自動設定', desc: '' },
+                { id: 'manual' as const, label: '手動設定', desc: '時間を選ぶ' },
+                { id: 'off' as const, label: '設定しない', desc: '' },
+              ]).map((option) => (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[
+                    styles.reminderOption,
+                    { backgroundColor: colors.selectorBg, borderColor: 'transparent' },
+                    reminderMode === option.id && { backgroundColor: colors.selectorSelectedBg, borderColor: colors.selectorSelectedBorder },
+                  ]}
+                  onPress={() => handleReminderModeChange(option.id)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    styles.reminderOptionLabel,
+                    { color: colors.textSecondary },
+                    reminderMode === option.id && { color: colors.selectorSelectedText, fontWeight: '600' },
+                  ]}>
+                    {option.label}
+                  </Text>
+                  {option.desc !== '' && (
+                    <Text style={[
+                      styles.reminderOptionDesc,
+                      { color: colors.textMuted },
+                      reminderMode === option.id && { color: colors.selectorSelectedText },
+                    ]}>
+                      {option.desc}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* 手動設定時の時刻表示・変更 */}
+            {reminderMode === 'manual' && notificationTimes.length > 0 && (
+              <TouchableOpacity
+                style={styles.manualTimeRow}
+                onPress={() => {
+                  const t = notificationTimes[0];
+                  setEditingNotificationId(t.id);
+                  setTempHour(t.hour);
+                  setTempMinute(t.minute);
+                  setShowTimePicker(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="time-outline" size={20} color={colors.accent} />
+                <Text style={[styles.manualTimeText, { color: colors.textPrimary }]}>
+                  {formatTime(notificationTimes[0].hour, notificationTimes[0].minute)}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </TouchableOpacity>
             )}
 
             <Text style={[styles.sectionHint, { color: colors.textMuted }]}>
               {colors.showMascot ? 'りなわんが毎日お知らせします' : '毎日お知らせします'}
             </Text>
-          </View>
-
-          {/* カレンダー連携セクション */}
-          <View style={[styles.section, { backgroundColor: colors.card }]}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>カレンダー連携</Text>
-
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color="#805AD5" />
-              </View>
-            ) : !isConnected ? (
-              <View style={styles.card}>
-                <View style={styles.cardContent}>
-                  <Ionicons name="calendar-outline" size={32} color="#A0AEC0" />
-                  <Text style={styles.cardText}>
-                    Googleカレンダーと連携すると{'\n'}予定を分析できます
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.connectButton}
-                  onPress={handleConnect}
-                  disabled={!request || connecting}
-                  activeOpacity={0.8}
-                >
-                  {connecting ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="logo-google" size={18} color="#FFF" />
-                      <Text style={styles.connectButtonText}>Googleで連携</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                {/* カレンダー一覧 */}
-                <View style={styles.card}>
-                  {calendars.map((calendar) => {
-                    const isSelected = selectedCalendarIds.includes(calendar.id);
-                    return (
-                      <View key={calendar.id} style={styles.calendarItem}>
-                        <View style={styles.calendarInfo}>
-                          <View
-                            style={[
-                              styles.calendarDot,
-                              { backgroundColor: calendar.backgroundColor || '#4285F4' },
-                            ]}
-                          />
-                          <View style={styles.calendarTextContainer}>
-                            <Text style={styles.calendarName} numberOfLines={1}>
-                              {calendar.summary}
-                            </Text>
-                            {calendar.primary && (
-                              <Text style={styles.primaryLabel}>メイン</Text>
-                            )}
-                          </View>
-                        </View>
-                        <Switch
-                          value={isSelected}
-                          onValueChange={() => toggleCalendar(calendar.id)}
-                          trackColor={{ false: '#E2E8F0', true: '#9F7AEA' }}
-                          thumbColor={isSelected ? '#805AD5' : '#FFF'}
-                        />
-                      </View>
-                    );
-                  })}
-                </View>
-
-                {/* 再接続・解除ボタン */}
-                <View style={styles.buttonRow}>
-                  <TouchableOpacity
-                    style={styles.reconnectButton}
-                    onPress={handleReconnect}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="refresh" size={16} color="#805AD5" />
-                    <Text style={styles.reconnectButtonText}>再接続</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.disconnectButton}
-                    onPress={handleDisconnect}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="unlink" size={16} color="#E53E3E" />
-                    <Text style={styles.disconnectButtonText}>解除</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
           </View>
 
           {/* ログアウトボタン */}
@@ -712,6 +576,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  closeBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   scrollView: {
     flex: 1,
   },
@@ -771,6 +648,68 @@ const styles = StyleSheet.create({
     color: '#718096',
     textAlign: 'center',
     marginTop: 8,
+  },
+  breathRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  breathLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  breathStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  breathStepButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  breathValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    width: 28,
+    textAlign: 'center',
+  },
+  reminderSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  reminderOption: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+  },
+  reminderOptionLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  reminderOptionDesc: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  manualTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  manualTimeText: {
+    fontSize: 24,
+    fontWeight: '600',
+    flex: 1,
   },
   modeSelector: {
     flexDirection: 'row',

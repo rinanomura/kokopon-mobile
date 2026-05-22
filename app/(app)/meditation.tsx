@@ -97,16 +97,13 @@ export default function MeditationScreen() {
       try {
         const userId = await getUserId();
         const now = new Date().toISOString();
-        const bx = parseFloat(params.beforeX || '0');
-        const by = parseFloat(params.beforeY || '0');
 
         const result = await createSessionLog({
           userId,
           timestamp: now,
-          beforeValence: bx,
-          beforeArousal: by,
+          meditationMode: 'guided',
           meditationType: menuId,
-          duration: 30,
+          settingDuration: 30,
         });
 
         sessionIdRef.current = result.id;

@@ -11,6 +11,7 @@ import {
   Animated,
   Easing,
   StatusBar,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -48,7 +49,10 @@ export default function TimerScreen() {
   const params = useLocalSearchParams<{
     bodyValue: string;
     mindValue: string;
-    reactivityValue: string;
+    breathValue: string;
+    bodyLabel: string;
+    mindLabel: string;
+    breathLabel: string;
     duration: string;
     mode: string;
   }>();
@@ -63,6 +67,7 @@ export default function TimerScreen() {
   const [remainingSeconds, setRemainingSeconds] = useState(totalSeconds);
   const [isPaused, setIsPaused] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const appState = useRef(AppState.currentState);
@@ -158,12 +163,13 @@ export default function TimerScreen() {
       try {
         const userId = await getUserId();
         const now = new Date().toISOString();
-        const beforeMind = parseFloat(params.mindValue ?? '0');
 
         const session = await createSessionLog({
           userId,
           timestamp: now,
-          beforeMentalCondition: beforeMind,
+          body: params.bodyLabel || undefined,
+          mind: params.mindLabel || undefined,
+          breath: params.breathLabel || undefined,
           meditationType: selectedGuideGroupId ?? mode,
           settingDuration: durationMinutes * 60,
           meditationMode: mode,
@@ -299,7 +305,7 @@ export default function TimerScreen() {
     // 実績時間を記録
     if (sessionIdRef.current) {
       try {
-        await updateSessionLog(sessionIdRef.current, undefined, totalSeconds);
+        await updateSessionLog(sessionIdRef.current, totalSeconds);
       } catch (error) {
         console.error('Failed to update actualDuration:', error);
       }
@@ -308,20 +314,20 @@ export default function TimerScreen() {
     // 振動
     Vibration.vibrate([0, 500, 200, 500]);
 
-    // after画面へ遷移（少し待ってから）
+    // リフレクション画面へ遷移（少し待ってから）
     setTimeout(() => {
       router.replace({
-        pathname: '/after',
+        pathname: '/reflection',
         params: {
           sessionId: sessionIdRef.current ?? '',
           bodyValue: params.bodyValue,
           mindValue: params.mindValue,
-          reactivityValue: params.reactivityValue,
+          breathValue: params.breathValue,
           meditationGuideId: selectedGuideGroupId ?? mode,
         },
       });
     }, 1500);
-  }, [params.bodyValue, params.mindValue, params.reactivityValue, selectedGuideGroupId, mode]);
+  }, [params.bodyValue, params.mindValue, params.breathValue, selectedGuideGroupId, mode]);
 
   const handlePause = useCallback(async () => {
     // 音声の一時停止/再開
@@ -335,10 +341,24 @@ export default function TimerScreen() {
     setIsPaused(prev => !prev);
   }, [isPaused]);
 
-  const handleCancel = useCallback(async () => {
+  // 「やめる」ボタン → モーダル表示
+  const handleCancel = useCallback(() => {
+    // タイマーを一時停止
     if (timerRef.current) {
       clearInterval(timerRef.current);
+      timerRef.current = null;
     }
+    // 音声を一時停止
+    if (soundRef.current) {
+      soundRef.current.pauseAsync();
+    }
+    setShowCancelModal(true);
+  }, []);
+
+  // 「記録して終わる」
+  const handleCancelWithRecord = useCallback(async () => {
+    setShowCancelModal(false);
+
     // 音声を停止
     if (soundRef.current) {
       await soundRef.current.stopAsync();
@@ -348,24 +368,47 @@ export default function TimerScreen() {
     const actualSeconds = totalSeconds - remainingSeconds;
     if (sessionIdRef.current && actualSeconds > 0) {
       try {
-        await updateSessionLog(sessionIdRef.current, undefined, actualSeconds);
+        await updateSessionLog(sessionIdRef.current, actualSeconds);
       } catch (error) {
         console.error('Failed to update actualDuration:', error);
       }
     }
 
-    // after画面へ遷移
+    // リフレクション画面へ遷移
     router.replace({
-      pathname: '/after',
+      pathname: '/reflection',
       params: {
         sessionId: sessionIdRef.current ?? '',
         bodyValue: params.bodyValue,
         mindValue: params.mindValue,
-        reactivityValue: params.reactivityValue,
+        breathValue: params.breathValue,
         meditationGuideId: selectedGuideGroupId ?? mode,
       },
     });
-  }, [totalSeconds, remainingSeconds, params.bodyValue, params.mindValue, params.reactivityValue, selectedGuideGroupId, mode]);
+  }, [totalSeconds, remainingSeconds, params.bodyValue, params.mindValue, params.breathValue, selectedGuideGroupId, mode]);
+
+  // 「記録せずやめる」
+  const handleCancelWithoutRecord = useCallback(async () => {
+    setShowCancelModal(false);
+
+    // 音声を停止
+    if (soundRef.current) {
+      await soundRef.current.stopAsync();
+    }
+
+    // ホームへ戻る
+    router.replace('/');
+  }, []);
+
+  // モーダルを閉じて再開
+  const handleResume = useCallback(async () => {
+    setShowCancelModal(false);
+    // 音声を再開
+    if (soundRef.current) {
+      await soundRef.current.playAsync();
+    }
+    setIsPaused(false);
+  }, []);
 
   // 時間表示フォーマット
   const formatTime = (seconds: number): string => {
@@ -526,6 +569,56 @@ export default function TimerScreen() {
             <View style={styles.spacer} />
           </View>
         )}
+        {/* 途中終了モーダル */}
+        <Modal
+          visible={showCancelModal}
+          transparent
+          animationType="fade"
+          onRequestClose={handleResume}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalCard, { backgroundColor: colors.card }]}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                途中ですが…
+              </Text>
+              <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+                ここまでの記録を残しますか？
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: `${colors.accent}15`, borderColor: colors.accent }]}
+                onPress={handleCancelWithRecord}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="checkmark-circle-outline" size={22} color={colors.accent} />
+                <Text style={[styles.modalButtonText, { color: colors.accent }]}>
+                  記録して終わる
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
+                onPress={handleCancelWithoutRecord}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash-outline" size={22} color={colors.textMuted} />
+                <Text style={[styles.modalButtonText, { color: colors.textSecondary }]}>
+                  記録せずやめる
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalResumeButton}
+                onPress={handleResume}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.modalResumeText, { color: colors.textMuted }]}>
+                  やっぱり続ける
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -707,5 +800,58 @@ const styles = StyleSheet.create({
   },
   spacer: {
     width: 80,
+  },
+
+  // 途中終了モーダル
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: '100%',
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    marginBottom: 24,
+  },
+  modalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+    marginBottom: 10,
+  },
+  modalButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalResumeButton: {
+    marginTop: 8,
+    paddingVertical: 8,
+  },
+  modalResumeText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

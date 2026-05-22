@@ -55,12 +55,27 @@
       "expo-web-browser",
       [
         "expo-alternate-app-icons",
-        {
-          "icons": {
-            "icon-simple-mode": "./assets/images/icon_simple_mode.png"
+        [
+          {
+            "name": "IconSimpleMode",
+            "ios": "./assets/images/icon_simple_mode.png",
+            "android": {
+              "foregroundImage": "./assets/images/icon_simple_mode.png",
+              "backgroundColor": "#1A2744"
+            }
           }
-        }
-      ]
+        ]
+      ],
+      ["expo-image-picker", {
+        "cameraPermission": "食事の写真を撮影するためにカメラを使用します",
+        "photosPermission": "食事の写真を選択するためにフォトライブラリを使用します"
+      }],
+      ["@kingstinct/react-native-healthkit", {
+        "NSHealthShareUsageDescription": "瞑想データとの相関分析のために、心拍数・HRV・睡眠データを読み取ります"
+      }],
+      ["expo-location", {
+        "locationWhenInUsePermission": "お住まいの地域の気象データを取得するために位置情報を使用します"
+      }]
     ],
     "experiments": {
       "typedRoutes": true,

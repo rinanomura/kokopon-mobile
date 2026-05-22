@@ -1,5 +1,7 @@
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
+import { uploadData, getUrl } from "aws-amplify/storage";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // GraphQL クライアント（遅延初期化）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,8 +115,9 @@ export const createSessionLogMutation = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeMentalCondition
-      afterMentalCondition
+      body
+      mind
+      breath
       meditationType
       settingDuration
       actualDuration
@@ -134,8 +137,9 @@ export const updateSessionLogMutation = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeMentalCondition
-      afterMentalCondition
+      body
+      mind
+      breath
       meditationType
       settingDuration
       actualDuration
@@ -156,8 +160,9 @@ export const listSessionLogsQuery = /* GraphQL */ `
         id
         userId
         timestamp
-        beforeMentalCondition
-        afterMentalCondition
+        body
+        mind
+        breath
         meditationType
         settingDuration
         actualDuration
@@ -179,8 +184,9 @@ export const getSessionLogQuery = /* GraphQL */ `
       id
       userId
       timestamp
-      beforeMentalCondition
-      afterMentalCondition
+      body
+      mind
+      breath
       meditationType
       settingDuration
       actualDuration
@@ -220,6 +226,7 @@ export const createEventClassificationMutation = /* GraphQL */ `
       attendeeIds
       isManuallyEdited
       source
+      isDeleted
       createdAt
       updatedAt
       owner
@@ -250,6 +257,7 @@ export const updateEventClassificationMutation = /* GraphQL */ `
       attendeeIds
       isManuallyEdited
       source
+      isDeleted
       createdAt
       updatedAt
       owner
@@ -290,6 +298,7 @@ export const listEventClassificationsQuery = /* GraphQL */ `
         attendeeIds
         isManuallyEdited
         source
+        isDeleted
         createdAt
         updatedAt
         owner
@@ -387,6 +396,7 @@ export interface EventClassificationInput {
   attendeeIds?: string[] | null;
   isManuallyEdited?: boolean;
   source?: EventClassificationSource;
+  isDeleted?: boolean;
 }
 
 export interface EventClassification extends EventClassificationInput {
@@ -411,8 +421,9 @@ export interface Person extends PersonInput {
 export interface SessionLogInput {
   userId: string;
   timestamp: string;
-  beforeMentalCondition: number;
-  afterMentalCondition?: number;
+  body?: string;           // からだ (1=軽い, 2=ふつう, 3=重い)
+  mind?: string;           // こころ (1=軽い, 2=ふつう, 3=重い)
+  breath?: string;         // 呼吸
   meditationType?: string;
   settingDuration?: number;
   actualDuration?: number;
@@ -424,8 +435,9 @@ export interface SessionLog {
   id: string;
   userId: string;
   timestamp: string;
-  beforeMentalCondition: number;
-  afterMentalCondition?: number;
+  body?: string;
+  mind?: string;
+  breath?: string;
   meditationType?: string;
   settingDuration?: number;
   actualDuration?: number;
@@ -557,17 +569,13 @@ export async function getSessionLog(id: string): Promise<SessionLog | null> {
 }
 
 /**
- * SessionLog を更新（瞑想終了時に after を追加）
+ * SessionLog を更新（瞑想終了時に actualDuration を追加）
  */
 export async function updateSessionLog(
   id: string,
-  afterMentalCondition?: number,
   actualDuration?: number
 ): Promise<SessionLog> {
   const input: Record<string, unknown> = { id };
-  if (afterMentalCondition !== undefined) {
-    input.afterMentalCondition = afterMentalCondition;
-  }
   if (actualDuration !== undefined) {
     input.actualDuration = actualDuration;
   }
@@ -575,6 +583,7 @@ export async function updateSessionLog(
     query: updateSessionLogMutation,
     variables: { input },
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (result as any).data.updateSessionLog;
 }
 
@@ -628,13 +637,13 @@ export async function updateEventClassification(
 }
 
 /**
- * EventClassification を削除
+ * EventClassification を論理削除
  */
 export async function deleteEventClassification(eventId: string): Promise<void> {
   await getClient().graphql({
-    query: deleteEventClassificationMutation,
+    query: updateEventClassificationMutation,
     variables: {
-      input: { eventId },
+      input: { eventId, isDeleted: true },
     },
   });
 }
@@ -1011,4 +1020,290 @@ export async function upsertEventChat(
     });
     return (result as any).data.createEventChat;
   }
+}
+
+// ========================================
+// MealLog 関連のクエリ・ミューテーション
+// ========================================
+
+const mealLogFields = `id userId timestamp imageUrl mealName bloodSugarStability antiInflammation bdnfSupport serotoninSupply hpaAxisImpact overallScore comment detectedFoods createdAt updatedAt owner`;
+
+export const createMealLogMutation = /* GraphQL */ `
+  mutation CreateMealLog($input: CreateMealLogInput!) {
+    createMealLog(input: $input) {
+      ${mealLogFields}
+    }
+  }
+`;
+
+export const deleteMealLogMutation = /* GraphQL */ `
+  mutation DeleteMealLog($input: DeleteMealLogInput!) {
+    deleteMealLog(input: $input) {
+      id
+    }
+  }
+`;
+
+export const listMealLogsByUserIdQuery = /* GraphQL */ `
+  query ListMealLogsByUserId($userId: String!) {
+    listMealLogsByUserId(userId: $userId) {
+      items {
+        ${mealLogFields}
+      }
+    }
+  }
+`;
+
+const MEAL_IMAGE_PREFIX = '@kokopon/meal_image_';
+
+export interface MealLog {
+  id: string;
+  userId: string;
+  timestamp: string;
+  imageUrl?: string;
+  imageBase64?: string;
+  mealName: string;
+  bloodSugarStability: number;
+  antiInflammation: number;
+  bdnfSupport: number;
+  serotoninSupply: number;
+  hpaAxisImpact: number;
+  overallScore: number;
+  comment: string;
+  detectedFoods: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MealLogInput {
+  mealName: string;
+  imageBase64?: string;
+  bloodSugarStability: number;
+  antiInflammation: number;
+  bdnfSupport: number;
+  serotoninSupply: number;
+  hpaAxisImpact: number;
+  overallScore: number;
+  comment: string;
+  detectedFoods: string[];
+}
+
+export async function createMealLog(input: MealLogInput): Promise<MealLog> {
+  const userId = await getUserId();
+  const { imageBase64, ...dynamoInput } = input;
+
+  let imageUrl: string | undefined;
+
+  // 画像をS3にアップロード
+  if (imageBase64) {
+    const binaryString = atob(imageBase64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const timestamp = Date.now();
+    const result = await uploadData({
+      path: ({ identityId }) => `meal-images/${identityId}/${timestamp}.jpg`,
+      data: bytes.buffer,
+      options: { contentType: 'image/jpeg' },
+    }).result;
+    imageUrl = result.path;
+  }
+
+  const result = await getClient().graphql({
+    query: createMealLogMutation,
+    variables: {
+      input: {
+        userId,
+        timestamp: new Date().toISOString(),
+        ...dynamoInput,
+        ...(imageUrl ? { imageUrl } : {}),
+      },
+    },
+  });
+  const created: MealLog = (result as any).data.createMealLog;
+
+  // 画像base64をAsyncStorageにもキャッシュ（高速表示用）
+  if (imageBase64) {
+    await AsyncStorage.setItem(`${MEAL_IMAGE_PREFIX}${created.id}`, imageBase64);
+    created.imageBase64 = imageBase64;
+  }
+
+  return created;
+}
+
+export async function listMealLogs(): Promise<MealLog[]> {
+  const userId = await getUserId();
+  const result = await getClient().graphql({
+    query: listMealLogsByUserIdQuery,
+    variables: { userId },
+  });
+  const items: MealLog[] = (result as any).data.listMealLogsByUserId.items;
+
+  // AsyncStorageキャッシュから画像を復元、なければS3の署名付きURLを取得
+  await Promise.all(
+    items.map(async (log) => {
+      const cached = await AsyncStorage.getItem(`${MEAL_IMAGE_PREFIX}${log.id}`);
+      if (cached) {
+        log.imageBase64 = cached;
+      } else if (log.imageUrl) {
+        try {
+          const { url } = await getUrl({ path: log.imageUrl });
+          log.imageUrl = url.toString();
+        } catch (e) {
+          console.warn('Failed to get S3 URL for meal image:', e);
+        }
+      }
+    })
+  );
+
+  return items.sort((a, b) =>
+    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+}
+
+export async function deleteMealLog(id: string): Promise<void> {
+  await getClient().graphql({
+    query: deleteMealLogMutation,
+    variables: { input: { id } },
+  });
+  await AsyncStorage.removeItem(`${MEAL_IMAGE_PREFIX}${id}`);
+}
+
+// ========================================
+// DailyHealthLog 関連のクエリ・ミューテーション
+// ========================================
+
+export interface DailyHealthLogInput {
+  userId: string;
+  date: string;
+  steps?: number;
+  activeCalories?: number;
+  exerciseMinutes?: number;
+  sleepHours?: number;
+  sleepCoreHours?: number;
+  sleepDeepHours?: number;
+  sleepRemHours?: number;
+  sleepAwakeMinutes?: number;
+  avgHeartRate?: number;
+  avgHRV?: number;
+}
+
+export interface DailyHealthLog extends DailyHealthLogInput {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: string;
+}
+
+export const createDailyHealthLogMutation = /* GraphQL */ `
+  mutation CreateDailyHealthLog($input: CreateDailyHealthLogInput!) {
+    createDailyHealthLog(input: $input) {
+      id userId date steps activeCalories exerciseMinutes
+      sleepHours sleepCoreHours sleepDeepHours sleepRemHours
+      sleepAwakeMinutes avgHeartRate avgHRV createdAt updatedAt owner
+    }
+  }
+`;
+
+export const deleteDailyHealthLogMutation = /* GraphQL */ `
+  mutation DeleteDailyHealthLog($input: DeleteDailyHealthLogInput!) {
+    deleteDailyHealthLog(input: $input) { id }
+  }
+`;
+
+export const listDailyHealthLogsByUserIdQuery = /* GraphQL */ `
+  query ListDailyHealthLogsByUserId($userId: String!, $limit: Int, $nextToken: String) {
+    listDailyHealthLogsByUserId(userId: $userId, limit: $limit, nextToken: $nextToken) {
+      items {
+        id userId date steps activeCalories exerciseMinutes
+        sleepHours createdAt updatedAt owner
+      }
+      nextToken
+    }
+  }
+`;
+
+export async function createDailyHealthLog(input: DailyHealthLogInput): Promise<DailyHealthLog> {
+  const result = await getClient().graphql({
+    query: createDailyHealthLogMutation,
+    variables: { input },
+  });
+  return (result as any).data.createDailyHealthLog;
+}
+
+export async function listDailyHealthLogs(): Promise<DailyHealthLog[]> {
+  const userId = await getUserId();
+  const result = await getClient().graphql({
+    query: listDailyHealthLogsByUserIdQuery,
+    variables: { userId, limit: 1000 },
+  });
+  return (result as any).data.listDailyHealthLogsByUserId?.items || [];
+}
+
+export async function deleteDailyHealthLog(id: string): Promise<void> {
+  await getClient().graphql({
+    query: deleteDailyHealthLogMutation,
+    variables: { input: { id } },
+  });
+}
+
+// ========================================
+// WorkoutLog 関連のクエリ・ミューテーション
+// ========================================
+
+export interface WorkoutLogInput {
+  userId: string;
+  activityType: number;
+  activityName: string;
+  startDate: string;
+  endDate: string;
+  durationMinutes: number;
+  totalEnergyBurned?: number;
+  totalDistance?: number;
+}
+
+export interface WorkoutLog extends WorkoutLogInput {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: string;
+}
+
+export const createWorkoutLogMutation = /* GraphQL */ `
+  mutation CreateWorkoutLog($input: CreateWorkoutLogInput!) {
+    createWorkoutLog(input: $input) {
+      id userId activityType activityName startDate endDate
+      durationMinutes totalEnergyBurned totalDistance createdAt updatedAt owner
+    }
+  }
+`;
+
+export const listWorkoutLogsByUserIdQuery = /* GraphQL */ `
+  query ListWorkoutLogsByUserId($userId: String!, $limit: Int, $nextToken: String) {
+    listWorkoutLogsByUserId(userId: $userId, limit: $limit, nextToken: $nextToken) {
+      items {
+        id userId activityType activityName startDate endDate
+        durationMinutes totalEnergyBurned totalDistance createdAt updatedAt owner
+      }
+      nextToken
+    }
+  }
+`;
+
+export async function createWorkoutLog(input: WorkoutLogInput): Promise<WorkoutLog> {
+  const result = await getClient().graphql({
+    query: createWorkoutLogMutation,
+    variables: { input },
+  });
+  return (result as any).data.createWorkoutLog;
+}
+
+export async function listWorkoutLogs(): Promise<WorkoutLog[]> {
+  const userId = await getUserId();
+  const result = await getClient().graphql({
+    query: listWorkoutLogsByUserIdQuery,
+    variables: { userId, limit: 1000 },
+  });
+  return (result as any).data.listWorkoutLogsByUserId?.items || [];
 }

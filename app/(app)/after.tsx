@@ -122,8 +122,13 @@ export default function AfterScreen() {
     sessionId: string;
     bodyValue: string;
     mindValue: string;
-    reactivityValue: string;
+    breathValue: string;
     meditationGuideId: string;
+    reflectionBreathing: string;
+    reflectionBody: string;
+    reflectionMind: string;
+    preGeneratedComment: string;
+    preloadedJourney: string;
   }>();
 
   const colors = useThemeColors();
@@ -141,14 +146,29 @@ export default function AfterScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
+    // リフレクション画面で事前生成されたコメントがあればそのまま使用
+    const hasPreGenerated = !!params.preGeneratedComment;
+
     const fetchComment = async () => {
+      if (hasPreGenerated) {
+        setMascotMessage(params.preGeneratedComment);
+        setLoading(false);
+        return;
+      }
+
+      // 事前生成がない場合のみAPI呼び出し（フォールバック）
       try {
         const comment = await generateAfterComment({
           body: parseFloat(params.bodyValue ?? '3'),
           mind: parseFloat(params.mindValue ?? '3'),
-          reactivity: parseFloat(params.reactivityValue ?? '3'),
+          breath: parseFloat(params.breathValue ?? '3'),
           meditationGuideId: params.meditationGuideId ?? '',
           designTheme,
+          reflection: {
+            breathing: params.reflectionBreathing || undefined,
+            body: params.reflectionBody || undefined,
+            mind: params.reflectionMind || undefined,
+          },
         });
         setMascotMessage(comment);
       } catch {
@@ -162,6 +182,17 @@ export default function AfterScreen() {
     };
 
     const fetchJourney = async () => {
+      // リフレクション画面で事前取得されたジャーニーデータがあれば使用
+      if (params.preloadedJourney) {
+        try {
+          const sessions: SessionLog[] = JSON.parse(params.preloadedJourney);
+          setJourneyStats(calcJourneyStats(sessions));
+          return;
+        } catch {
+          // パース失敗時はAPI再取得
+        }
+      }
+
       try {
         const sessions = await listSessionLogs();
         setJourneyStats(calcJourneyStats(sessions));
@@ -172,7 +203,7 @@ export default function AfterScreen() {
 
     fetchComment();
     fetchJourney();
-  }, [params.bodyValue, params.mindValue, params.reactivityValue, params.meditationGuideId, designTheme]);
+  }, [params.bodyValue, params.mindValue, params.breathValue, params.meditationGuideId, designTheme, params.preGeneratedComment, params.preloadedJourney]);
 
   // コメント表示完了後、ジャーニーマップをアニメーション表示
   useEffect(() => {

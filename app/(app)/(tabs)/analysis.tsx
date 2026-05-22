@@ -47,6 +47,8 @@ import {
   listEventChatIds,
   listEventChats,
   listEventChangeLogs,
+  listDailyHealthLogs,
+  DailyHealthLog,
 } from '@/lib/api';
 import {
   classifyCalendarEvents,
@@ -54,14 +56,16 @@ import {
   analyzeStressPatterns,
   StressAnalysisResult,
 } from '@/lib/openRouter';
+import { useHealthKit, DailyHealthData } from '@/hooks/useHealthKit';
+import { getEnvHealthHistory, getPersonalProfile, recordEnvHealthData, EnvHealthRecord, PersonalProfile } from '@/lib/bodyForecast';
+import { useWeather } from '@/hooks/useWeather';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // タブの種類
-type TabType = 'check' | 'chart' | 'aiAnalysis';
+type TabType = 'chart' | 'aiAnalysis';
 
 const TABS: { key: TabType; label: string; icon: string }[] = [
-  { key: 'check', label: 'チェック', icon: 'list' },
   { key: 'chart', label: 'チャート', icon: 'bar-chart' },
   { key: 'aiAnalysis', label: 'AI分析', icon: 'sparkles' },
 ];
@@ -154,7 +158,7 @@ export default function AnalysisScreen() {
   const colors = useThemeColors();
   const { request, response, promptAsync, redirectUri } = useGoogleAuth();
 
-  const [activeTab, setActiveTab] = useState<TabType>('check');
+  const [activeTab, setActiveTab] = useState<TabType>('chart');
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [sessions, setSessions] = useState<SessionLog[]>([]);
   const [loading, setLoading] = useState(false);
@@ -205,8 +209,56 @@ export default function AnalysisScreen() {
   // チャット保存済みのイベントID
   const [chatSavedEventIds, setChatSavedEventIds] = useState<Set<string>>(new Set());
 
+  // 削除済みイベントID（AsyncStorageに永続化）
+  const [deletedEventIds, setDeletedEventIds] = useState<Set<string>>(new Set());
+
+  // HealthKit
+  const {
+    healthData: healthKitData,
+    isAvailable: healthKitAvailable,
+    isAuthorized: healthKitAuthorized,
+    loading: healthKitLoading,
+    requestAuthorization: requestHealthKitAuth,
+    fetchHealthData,
+  } = useHealthKit();
+
+  // DynamoDBヘルスログ
+  const [dynamoHealthLogs, setDynamoHealthLogs] = useState<DailyHealthLog[]>([]);
+
+  // 環境×身体 相関データ
+  const [envHealthHistory, setEnvHealthHistory] = useState<EnvHealthRecord[]>([]);
+  const [personalProfile, setPersonalProfile] = useState<PersonalProfile | null>(null);
+
+  // 環境データ（相関記録用）
+  const { environment } = useWeather();
+
   // 認証コードの重複使用を防ぐためのRef
   const processedCodeRef = useRef<string | null>(null);
+
+  /**
+   * HealthKit: 権限リクエスト & データ取得
+   */
+  useEffect(() => {
+    if (healthKitAvailable && !healthKitAuthorized) {
+      requestHealthKitAuth();
+    }
+  }, [healthKitAvailable, healthKitAuthorized, requestHealthKitAuth]);
+
+  useEffect(() => {
+    if (healthKitAuthorized) {
+      fetchHealthData(30);
+    }
+  }, [healthKitAuthorized, fetchHealthData]);
+
+  // HealthKitデータを環境記録に保存（相関分析用）
+  useEffect(() => {
+    if (environment && healthKitData.length > 0) {
+      const today = healthKitData.find(d => d.date === new Date().toISOString().split('T')[0]);
+      if (today) {
+        recordEnvHealthData(environment, today);
+      }
+    }
+  }, [environment, healthKitData]);
 
   /**
    * アプリ起動時に保存済みトークンを読み込む
@@ -214,6 +266,12 @@ export default function AnalysisScreen() {
   useEffect(() => {
     const loadSavedSession = async () => {
       try {
+        // 削除済みイベントIDを復元
+        const deletedIds = await AsyncStorage.getItem('deletedEventIds');
+        if (deletedIds) {
+          setDeletedEventIds(new Set(JSON.parse(deletedIds)));
+        }
+
         const savedToken = await AsyncStorage.getItem('googleAccessToken');
         const savedCalendars = await AsyncStorage.getItem('googleCalendars');
         const savedCalendarIds = await AsyncStorage.getItem('selectedCalendarIds');
@@ -252,6 +310,16 @@ export default function AnalysisScreen() {
           // チャット保存済みのイベントIDを取得
           const chatIds = await listEventChatIds();
           setChatSavedEventIds(chatIds);
+
+          // DynamoDBヘルスログ + 環境×身体の相関データを取得
+          const [healthLogs, history, profile] = await Promise.all([
+            listDailyHealthLogs().catch(() => []),
+            getEnvHealthHistory(),
+            getPersonalProfile(),
+          ]);
+          setDynamoHealthLogs(healthLogs);
+          setEnvHealthHistory(history);
+          setPersonalProfile(profile);
         } catch (error) {
           console.error('Refresh data error:', error);
         }
@@ -370,8 +438,10 @@ export default function AnalysisScreen() {
     // 既に分類済みのイベントIDを取得
     const classifiedEventIds = new Set(savedClassifications.map(c => c.eventId));
 
-    // 未分類のイベントのみ抽出
-    const unclassifiedEvents = calendarEvents.filter(e => !classifiedEventIds.has(e.id));
+    // 未分類のイベントのみ抽出（削除済みも除外）
+    const unclassifiedEvents = calendarEvents.filter(
+      e => !classifiedEventIds.has(e.id) && !deletedEventIds.has(e.id)
+    );
 
     if (unclassifiedEvents.length === 0) {
       Alert.alert('情報', 'すべてのイベントは分類済みです');
@@ -425,7 +495,7 @@ export default function AnalysisScreen() {
     } finally {
       setClassifying(false);
     }
-  }, [calendarEvents, savedClassifications]);
+  }, [calendarEvents, savedClassifications, deletedEventIds]);
 
   /**
    * すべてのイベントを再分類（既存の分類を削除して再度AI分類）
@@ -450,6 +520,10 @@ export default function AnalysisScreen() {
         await deleteEventClassification(classification.eventId);
       }
       setSavedClassifications([]);
+
+      // 削除済みリストもクリア（再分類なので全イベントを対象にする）
+      setDeletedEventIds(new Set());
+      await AsyncStorage.removeItem('deletedEventIds');
 
       // 全イベントをAI分類
       const userId = await getUserId();
@@ -529,7 +603,7 @@ export default function AnalysisScreen() {
   };
 
   /**
-   * 削除を確認
+   * 削除を確認（削除済みIDをAsyncStorageに永続化し、再分類を防止）
    */
   const handleDeleteConfirm = async () => {
     if (!deletingEvent) return;
@@ -539,6 +613,13 @@ export default function AnalysisScreen() {
       setSavedClassifications(prev =>
         prev.filter(c => c.eventId !== deletingEvent.eventId)
       );
+
+      // 削除済みIDを保存（再表示・再分類を防止）
+      const newDeletedIds = new Set(deletedEventIds);
+      newDeletedIds.add(deletingEvent.eventId);
+      setDeletedEventIds(newDeletedIds);
+      await AsyncStorage.setItem('deletedEventIds', JSON.stringify([...newDeletedIds]));
+
       setDeleteModalVisible(false);
       setDeletingEvent(null);
     } catch (error) {
@@ -725,7 +806,7 @@ export default function AnalysisScreen() {
   };
 
   /**
-   * 日別ストレスデータを計算
+   * 日別ストレスデータを計算（ヘルスデータ含む）
    */
   const dailyStressData = useMemo(() => {
     // 過去30日間の日付を生成（今日から30日前まで）
@@ -737,10 +818,37 @@ export default function AnalysisScreen() {
       days.push(d.toISOString().split('T')[0]);
     }
 
+    // HealthKitデータをMapに変換
+    const healthByDate = new Map<string, DailyHealthData>();
+    // まずDynamoDBのデータをベースに入れる
+    dynamoHealthLogs.forEach(d => {
+      healthByDate.set(d.date, {
+        date: d.date,
+        sleepHours: d.sleepHours,
+        avgHRV: d.avgHRV,
+        avgHeartRate: d.avgHeartRate,
+        steps: d.steps,
+        activeCalories: d.activeCalories,
+        exerciseMinutes: d.exerciseMinutes,
+      } as DailyHealthData);
+    });
+    // HealthKitデータで上書き（より正確）
+    healthKitData.forEach(d => healthByDate.set(d.date, d));
+
     // 日付ごとにイベントをグループ化（ストレススコアの配列を保持）
-    const byDate: Record<string, { events: { score: number; summary: string }[]; hasSession: boolean }> = {};
+    const byDate: Record<string, {
+      events: { score: number; summary: string }[];
+      hasSession: boolean;
+      sessionMinutes: number;
+      health?: DailyHealthData;
+    }> = {};
     days.forEach(date => {
-      byDate[date] = { events: [], hasSession: false };
+      byDate[date] = {
+        events: [],
+        hasSession: false,
+        sessionMinutes: 0,
+        health: healthByDate.get(date),
+      };
     });
 
     savedClassifications.forEach((event) => {
@@ -757,6 +865,10 @@ export default function AnalysisScreen() {
       const dateStr = session.timestamp.split('T')[0];
       if (byDate[dateStr]) {
         byDate[dateStr].hasSession = true;
+        if (session.actualDuration) {
+          byDate[dateStr].sessionMinutes = (byDate[dateStr].sessionMinutes || 0)
+            + Math.round(session.actualDuration / 60);
+        }
       }
     });
 
@@ -765,8 +877,10 @@ export default function AnalysisScreen() {
       events: byDate[date].events,
       totalStress: byDate[date].events.reduce((sum, e) => sum + e.score, 0),
       hasSession: byDate[date].hasSession,
+      sessionMinutes: byDate[date].sessionMinutes || 0,
+      health: byDate[date].health,
     }));
-  }, [savedClassifications, sessions]);
+  }, [savedClassifications, sessions, healthKitData, dynamoHealthLogs]);
 
   /**
    * 相関データを計算
@@ -793,16 +907,13 @@ export default function AnalysisScreen() {
       const daySessions = sessionsByDate[date];
       const eventCount = eventCountByDate[date] || 0;
 
+      // body/mind は文字列ラベル → 数値変換（軽い=1, ふつう=2, 重い=3）
+      const bodyToNum = (b?: string) => b === '軽い' ? 1 : b === '重い' ? 3 : 2;
       const avgArousalBefore =
-        daySessions.reduce((sum, s) => sum + s.beforeArousal, 0) / daySessions.length;
+        daySessions.reduce((sum, s) => sum + bodyToNum(s.mind), 0) / daySessions.length;
 
-      const afterSessions = daySessions.filter(
-        (s) => s.afterArousal !== null && s.afterArousal !== undefined
-      );
-      const avgArousalAfter =
-        afterSessions.length > 0
-          ? afterSessions.reduce((sum, s) => sum + (s.afterArousal ?? 0), 0) / afterSessions.length
-          : null;
+      // afterは現在の仕組みでは記録しないためnull
+      const avgArousalAfter: number | null = null;
 
       data.push({
         date,
@@ -826,8 +937,8 @@ export default function AnalysisScreen() {
     // 重複を防ぐため、eventIdごとに最新のものだけを保持
     const latestByEventId = new Map<string, EventClassification>();
 
-    // 各eventIdについて最新のレコード（updatedAtが最新）を選択
-    savedClassifications.forEach((event) => {
+    // 各eventIdについて最新のレコード（updatedAtが最新）を選択（削除済みを除外）
+    savedClassifications.filter(e => !deletedEventIds.has(e.eventId)).forEach((event) => {
       const existing = latestByEventId.get(event.eventId);
       if (!existing) {
         latestByEventId.set(event.eventId, event);
@@ -853,9 +964,9 @@ export default function AnalysisScreen() {
       groups[dateKey].push(event);
     });
 
-    // 未分類のカレンダーイベントもデフォルト値で追加
+    // 未分類のカレンダーイベントもデフォルト値で追加（削除済みを除外）
     calendarEvents.forEach((event) => {
-      if (!classifiedEventIds.has(event.id)) {
+      if (!classifiedEventIds.has(event.id) && !deletedEventIds.has(event.id)) {
         const startStr = event.start.dateTime || event.start.date || '';
         const endStr = event.end.dateTime || event.end.date || '';
         const dateKey = getDateKey(startStr);
@@ -893,210 +1004,17 @@ export default function AnalysisScreen() {
     return Object.entries(groups)
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([date, events]) => ({ date, events }));
-  }, [savedClassifications, calendarEvents]);
+  }, [savedClassifications, calendarEvents, deletedEventIds]);
 
   /**
    * 未分類のイベント数
    */
   const unclassifiedCount = useMemo(() => {
     const classifiedEventIds = new Set(savedClassifications.map(c => c.eventId));
-    return calendarEvents.filter(e => !classifiedEventIds.has(e.id)).length;
-  }, [calendarEvents, savedClassifications]);
-
-  /**
-   * ストレスチェックタブ
-   */
-  const renderCheckTab = () => {
-    return (
-      <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
-        {/* ボタンエリア */}
-        <View style={styles.buttonArea}>
-          {/* AI分類ボタン（未分類がある場合のみ表示） */}
-          {unclassifiedCount > 0 && (
-            <TouchableOpacity
-              style={styles.classifyButton}
-              onPress={handleClassify}
-              disabled={classifying}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={classifying ? ['#A0AEC0', '#A0AEC0'] : ['#9F7AEA', '#805AD5']}
-                style={styles.classifyButtonGradient}
-              >
-                {classifying ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Ionicons name="sparkles" size={18} color="#FFF" />
-                )}
-                <Text style={styles.classifyButtonText}>
-                  {classifying ? 'AI分類中...' : `${unclassifiedCount}件を分析`}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          )}
-
-          {/* 再分類ボタン（分類済みがある場合に表示） */}
-          {savedClassifications.length > 0 && (
-            <TouchableOpacity
-              style={styles.reclassifyButton}
-              onPress={handleReclassifyAll}
-              disabled={classifying}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh" size={16} color={classifying ? '#A0AEC0' : '#805AD5'} />
-              <Text style={[styles.reclassifyButtonText, classifying && { color: '#A0AEC0' }]}>
-                すべて再分類
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* 分類結果（日付グループ） */}
-        {groupedByDate.length > 0 ? (
-          groupedByDate.map(({ date, events }) => (
-            <View key={date}>
-              {/* 日付ヘッダー */}
-              <View style={styles.dateHeader}>
-                <Text style={styles.dateHeaderText}>{formatDateHeader(date)}</Text>
-              </View>
-
-              {/* イベントカード */}
-              {events.map((event) => {
-                const isUnclassified = event.stressScore === null;
-                return (
-                  <View
-                    key={event.eventId}
-                    style={[styles.eventCard, isUnclassified && styles.eventCardUnclassified]}
-                  >
-                    <View style={styles.eventHeader}>
-                      <View style={styles.eventTitleRow}>
-                        <Text style={styles.eventTime}>
-                          {formatTimeRange(event.eventStart, event.eventEnd)}
-                        </Text>
-                        <View style={styles.eventBadges}>
-                          {event.isManuallyEdited && (
-                            <View style={styles.editedBadge}>
-                              <Text style={styles.editedBadgeText}>編集済</Text>
-                            </View>
-                          )}
-                          {isUnclassified ? (
-                            <View style={styles.unclassifiedBadge}>
-                              <Text style={styles.unclassifiedBadgeText}>未分類</Text>
-                            </View>
-                          ) : (
-                            <View
-                              style={[
-                                styles.stressBadge,
-                                { backgroundColor: getStressColor(event.stressScore || 3) },
-                              ]}
-                            >
-                              <Text style={styles.stressBadgeText}>
-                                {event.stressScore}
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                      <Text style={styles.eventTitle} numberOfLines={1}>
-                        {event.eventSummary}
-                      </Text>
-                    </View>
-                    <View style={styles.eventTagsRow}>
-                      <View style={styles.eventTags}>
-                        {isUnclassified ? (
-                          <Text style={styles.unclassifiedHint}>
-                            AIで分析するとストレススコアが付きます
-                          </Text>
-                        ) : (
-                          <>
-                            <View style={styles.tag}>
-                              <Text style={styles.tagText}>
-                                {getParticipantsLabel(event.participants)}
-                              </Text>
-                            </View>
-                            {/* 一人以外の場合のみ関係性を表示 */}
-                            {event.participants !== 'solo' && (
-                              event.relationships && event.relationships.length > 0 ? (
-                                event.relationships.map((rel, idx) => (
-                                  <View key={idx} style={styles.tag}>
-                                    <Text style={styles.tagText}>
-                                      {getRelationshipLabel(rel)}
-                                    </Text>
-                                  </View>
-                                ))
-                              ) : (
-                                <View style={styles.warningTag}>
-                                  <Ionicons name="alert-circle" size={12} color="#ED8936" />
-                                  <Text style={styles.warningTagText}>関係性を設定</Text>
-                                </View>
-                              )
-                            )}
-                            {/* 一人以外の場合のみ形式を表示 */}
-                            {event.participants !== 'solo' && (
-                              <View style={styles.tag}>
-                                <Text style={styles.tagText}>
-                                  {getFormatLabel(event.format)}
-                                </Text>
-                              </View>
-                            )}
-                          </>
-                        )}
-                      </View>
-                      {!isUnclassified && (
-                        <View style={styles.eventActions}>
-                          {/* AIレビューボタン */}
-                          <TouchableOpacity
-                            style={styles.aiReviewButton}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleAIReviewStart(event);
-                            }}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          >
-                            <View style={styles.rinawanIconContainer}>
-                              <Image
-                                source={require('@/assets/images/rinawan_tilting_head.gif')}
-                                style={styles.rinawanIcon}
-                              />
-                              {chatSavedEventIds.has(event.eventId) && (
-                                <View style={styles.chatSavedBadge}>
-                                  <Ionicons name="checkmark" size={10} color="#FFF" />
-                                </View>
-                              )}
-                            </View>
-                          </TouchableOpacity>
-                          {/* 3点メニューボタン */}
-                          <TouchableOpacity
-                            style={styles.menuButton}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleMenuOpen(event);
-                            }}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          >
-                            <Ionicons name="ellipsis-vertical" size={18} color="#718096" />
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          ))
-        ) : (
-          <View style={styles.emptyState}>
-            <Ionicons name="calendar-outline" size={48} color="#A0AEC0" style={{ marginBottom: 12 }} />
-            <Text style={styles.emptyText}>
-              {unclassifiedCount > 0
-                ? `${unclassifiedCount}件の予定があります\n上のボタンで分析してください`
-                : 'カレンダーに予定がありません'}
-            </Text>
-          </View>
-        )}
-      </ScrollView>
-    );
-  };
+    return calendarEvents.filter(
+      e => !classifiedEventIds.has(e.id) && !deletedEventIds.has(e.id)
+    ).length;
+  }, [calendarEvents, savedClassifications, deletedEventIds]);
 
   /**
    * チャートタブ
@@ -1115,64 +1033,191 @@ export default function AnalysisScreen() {
     const chartHeight = 140;
     const segmentHeight = isChartExpanded ? 16 : 8; // 縮小時はセグメント高さも小さく
 
-    const renderBars = () => (
-      <View style={isChartExpanded ? styles.expandedBarsContainer : styles.shrunkBarsContainer}>
-        {dailyStressData.map((item) => (
-          <TouchableOpacity
-            key={item.date}
-            style={[styles.barWrapper, { width: barWidth }]}
-            onPress={() => item.events.length > 0 && setSelectedDayData(item)}
-            activeOpacity={item.events.length > 0 ? 0.7 : 1}
-          >
-            <View style={[styles.barColumn, { height: chartHeight }]}>
-              {item.events.length > 0 ? (
-                <View style={styles.stackedBar}>
-                  {item.events.map((event, idx) => {
-                    const height = Math.max(
-                      (event.score / maxTotalStress) * chartHeight,
-                      segmentHeight
-                    );
-                    return (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.barSegment,
-                          {
-                            height,
-                            backgroundColor: getStressColor(event.score),
-                          },
-                        ]}
-                      />
-                    );
-                  })}
-                </View>
-              ) : (
-                <View style={styles.emptyBar} />
-              )}
-            </View>
-            {item.hasSession && (
-              <View style={styles.sessionMarker}>
-                <Text style={styles.sessionMarkerText}>●</Text>
-              </View>
-            )}
-            {isChartExpanded ? (
-              <Text style={styles.barLabel}>{formatDate(item.date)}</Text>
-            ) : (
-              // 縮小時は5日おきにラベル表示
-              parseInt(item.date.slice(8)) % 5 === 0 && (
-                <Text style={styles.barLabelSmall}>{item.date.slice(8)}</Text>
-              )
-            )}
-          </TouchableOpacity>
-        ))}
-      </View>
+    // 睡眠時間の最大値（右Y軸スケーリング用）
+    const maxSleep = Math.max(
+      ...dailyStressData.filter(d => d.health?.sleepHours != null).map(d => d.health!.sleepHours!),
+      9
     );
+    const hasSleepData = dailyStressData.some(d => d.health?.sleepHours != null);
+
+    const renderBars = () => {
+      // 睡眠折れ線のデータポイント（index, y座標）
+      const sleepPoints: { index: number; y: number; hours: number }[] = [];
+      dailyStressData.forEach((item, i) => {
+        if (item.health?.sleepHours != null) {
+          const y = chartHeight - (item.health.sleepHours / maxSleep) * chartHeight;
+          sleepPoints.push({ index: i, y, hours: item.health.sleepHours });
+        }
+      });
+
+      return (
+        <View style={{ position: 'relative' }}>
+          {/* ストレスバー + 日付 */}
+          <View style={isChartExpanded ? styles.expandedBarsContainer : styles.shrunkBarsContainer}>
+            {dailyStressData.map((item) => (
+              <TouchableOpacity
+                key={item.date}
+                style={[styles.barWrapper, { width: barWidth }]}
+                onPress={() => item.events.length > 0 && setSelectedDayData(item)}
+                activeOpacity={item.events.length > 0 ? 0.7 : 1}
+              >
+                <View style={[styles.barColumn, { height: chartHeight }]}>
+                  {item.events.length > 0 ? (
+                    <View style={[styles.stackedBar, {
+                      height: (item.totalStress / maxTotalStress) * chartHeight,
+                    }]}>
+                      {item.events.map((event, idx) => (
+                        <View
+                          key={idx}
+                          style={[styles.barSegment, {
+                            flex: event.score,
+                            backgroundColor: getStressColor(event.score),
+                          }]}
+                        />
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+                <View style={{ height: 12 }}>
+                  {isChartExpanded ? (
+                    <Text style={styles.barLabel}>{formatDate(item.date)}</Text>
+                  ) : (
+                    parseInt(item.date.slice(8)) % 5 === 0 ? (
+                      <Text style={styles.barLabelSmall}>{item.date.slice(8)}</Text>
+                    ) : null
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+
+          {/* 睡眠折れ線オーバーレイ */}
+          {hasSleepData && (
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: chartHeight }} pointerEvents="none">
+              {/* ドット */}
+              {sleepPoints.map((p, i) => (
+                <View
+                  key={i}
+                  style={{
+                    position: 'absolute',
+                    left: p.index * barWidth + barWidth / 2 - 3,
+                    top: p.y - 3,
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: p.hours < 6 ? '#805AD5' : '#4299E1',
+                    zIndex: 3,
+                  }}
+                />
+              ))}
+              {/* 線 */}
+              {sleepPoints.map((p, i) => {
+                if (i === 0) return null;
+                const prev = sleepPoints[i - 1];
+                const dx = (p.index - prev.index) * barWidth;
+                const dy = p.y - prev.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                return (
+                  <View
+                    key={`line-${i}`}
+                    style={{
+                      position: 'absolute',
+                      left: prev.index * barWidth + barWidth / 2,
+                      top: prev.y,
+                      width: len,
+                      height: 1.5,
+                      backgroundColor: '#4299E1',
+                      transform: [{ rotate: `${angle}deg` }],
+                      transformOrigin: 'left center',
+                      zIndex: 2,
+                    }}
+                  />
+                );
+              })}
+            </View>
+          )}
+        </View>
+      );
+    };
+
+    // HealthKitデータの最大値を計算（チャートスケーリング用）
+    const hasHealthData = healthKitData.length > 0 && healthKitData.some(
+      d => d.avgHRV !== undefined || d.avgHeartRate !== undefined || d.sleepHours !== undefined
+        || d.steps !== undefined || d.activeCalories !== undefined || d.exerciseMinutes !== undefined
+        || (d.workouts && d.workouts.length > 0)
+    );
+    const maxHRV = hasHealthData
+      ? Math.max(...healthKitData.filter(d => d.avgHRV !== undefined).map(d => d.avgHRV!), 50)
+      : 50;
+    const maxHR = hasHealthData
+      ? Math.max(...healthKitData.filter(d => d.avgHeartRate !== undefined).map(d => d.avgHeartRate!), 100)
+      : 100;
+    const healthLineHeight = 60;
+
+    const renderHealthLines = () => {
+      if (!hasHealthData) return null;
+      return (
+        <View style={[
+          isChartExpanded ? styles.expandedBarsContainer : styles.shrunkBarsContainer,
+          { height: healthLineHeight, marginTop: 4 },
+        ]}>
+          {dailyStressData.map((item, index) => {
+            const health = item.health;
+            const hrvHeight = health?.avgHRV !== undefined
+              ? (health.avgHRV / maxHRV) * healthLineHeight
+              : 0;
+            const hrHeight = health?.avgHeartRate !== undefined
+              ? (health.avgHeartRate / maxHR) * healthLineHeight
+              : 0;
+            const sleepHours = health?.sleepHours;
+            const isShortSleep = sleepHours !== undefined && sleepHours < 6;
+
+            return (
+              <View key={item.date} style={[styles.healthBarWrapper, { width: barWidth }]}>
+                {/* HRV ドット（青） */}
+                {hrvHeight > 0 && (
+                  <View
+                    style={[
+                      styles.healthDot,
+                      {
+                        bottom: hrvHeight - 3,
+                        backgroundColor: '#4299E1',
+                      },
+                    ]}
+                  />
+                )}
+                {/* 心拍 ドット（赤） */}
+                {hrHeight > 0 && (
+                  <View
+                    style={[
+                      styles.healthDot,
+                      {
+                        bottom: hrHeight - 3,
+                        backgroundColor: '#F56565',
+                      },
+                    ]}
+                  />
+                )}
+                {/* 睡眠不足マーカー */}
+                {isShortSleep && (
+                  <View style={styles.shortSleepMarker}>
+                    <Text style={styles.shortSleepText}>z</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      );
+    };
 
     return (
       <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
         <View style={styles.chartContainer}>
           <View style={styles.chartHeader}>
-            <Text style={styles.chartTitle}>日別ストレスレベル（直近30日）</Text>
+            <Text style={styles.chartTitle}>ストレス・睡眠・運動（直近30日）</Text>
             <TouchableOpacity
               style={styles.chartToggleButton}
               onPress={() => setIsChartExpanded(!isChartExpanded)}
@@ -1203,29 +1248,424 @@ export default function AnalysisScreen() {
             ) : (
               renderBars()
             )}
+
+            {/* 右Y軸: 睡眠時間 */}
+            {hasSleepData && (
+              <View style={styles.yAxisRight}>
+                <Text style={[styles.yAxisLabel, { color: '#4299E1' }]}>{maxSleep}h</Text>
+                <Text style={[styles.yAxisLabel, { color: '#4299E1' }]}>0h</Text>
+              </View>
+            )}
+          </View>
+
+          {/* 瞑想アイコン行 */}
+          <View style={[styles.chartIconRow, { paddingLeft: 24 }]}>
+            {dailyStressData.map((item) => (
+              <View key={`med-${item.date}`} style={{ width: barWidth, alignItems: 'center' }}>
+                {item.hasSession ? (
+                  <Text style={styles.chartMarkerIcon}>{'\uD83E\uDDD8'}</Text>
+                ) : <View style={{ height: 8 }} />}
+              </View>
+            ))}
+          </View>
+
+          {/* 運動アイコン行 */}
+          <View style={[styles.chartIconRow, { paddingLeft: 24 }]}>
+            {dailyStressData.map((item) => (
+              <View key={`ex-${item.date}`} style={{ width: barWidth, alignItems: 'center' }}>
+                {((item.health?.exerciseMinutes != null && item.health.exerciseMinutes > 0)
+                  || (item.health?.workouts != null && item.health.workouts.length > 0)) ? (
+                  <Text style={styles.chartMarkerIcon}>{'\uD83C\uDFC3'}</Text>
+                ) : <View style={{ height: 8 }} />}
+              </View>
+            ))}
           </View>
 
           <View style={styles.legend}>
             <View style={styles.legendItem}>
-              <View style={[styles.legendColor, { backgroundColor: '#4CAF50' }]} />
-              <Text style={styles.legendText}>低</Text>
-            </View>
-            <View style={styles.legendItem}>
               <View style={[styles.legendColor, { backgroundColor: '#FFC107' }]} />
-              <Text style={styles.legendText}>中</Text>
+              <Text style={styles.legendText}>ストレス</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendColor, { backgroundColor: '#F44336' }]} />
-              <Text style={styles.legendText}>高</Text>
+              <View style={[styles.legendColor, { backgroundColor: '#4299E1', width: 14, height: 2, borderRadius: 1 }]} />
+              <Text style={styles.legendText}>睡眠</Text>
             </View>
             <View style={styles.legendItem}>
-              <Text style={styles.sessionDot}>●</Text>
-              <Text style={styles.legendText}>セッション実施日</Text>
+              <Text style={{ fontSize: 10 }}>{'\uD83E\uDDD8'}</Text>
+              <Text style={styles.legendText}>瞑想</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <Text style={{ fontSize: 10 }}>{'\uD83C\uDFC3'}</Text>
+              <Text style={styles.legendText}>運動</Text>
             </View>
           </View>
 
           {isChartExpanded && <Text style={styles.chartHint}>← 左右にスワイプ →</Text>}
         </View>
+
+        {/* HealthKit データチャート */}
+        {hasHealthData && (
+          <View style={styles.chartContainer}>
+            <View style={styles.chartHeader}>
+              <Text style={styles.chartTitle}>ヘルスデータ（直近30日）</Text>
+              <View style={styles.healthBadge}>
+                <Ionicons name="heart" size={12} color="#F56565" />
+                <Text style={styles.healthBadgeText}>HealthKit</Text>
+              </View>
+            </View>
+
+            <View style={styles.chartWrapper}>
+              <View style={[styles.yAxis, { height: healthLineHeight }]}>
+                <Text style={styles.yAxisLabel}>{maxHRV}</Text>
+                <Text style={styles.yAxisLabel}>0</Text>
+              </View>
+              {isChartExpanded ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.horizontalBarsContainer}
+                >
+                  {renderHealthLines()}
+                </ScrollView>
+              ) : (
+                renderHealthLines()
+              )}
+            </View>
+
+            <View style={styles.legend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendColor, { backgroundColor: '#4299E1' }]} />
+                <Text style={styles.legendText}>HRV</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendColor, { backgroundColor: '#F56565' }]} />
+                <Text style={styles.legendText}>心拍数</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <Text style={[styles.legendText, { color: '#805AD5', fontSize: 11 }]}>z</Text>
+                <Text style={styles.legendText}>睡眠不足</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* HealthKit ステータスカード */}
+        {healthKitAvailable && (
+          <View style={styles.healthKitStatusCard}>
+            <View style={styles.healthKitStatusHeader}>
+              <Ionicons
+                name={healthKitAuthorized ? 'heart-circle' : 'heart-circle-outline'}
+                size={22}
+                color={healthKitAuthorized ? '#48BB78' : '#F56565'}
+              />
+              <Text style={styles.healthKitStatusTitle}>ヘルスケア連携</Text>
+              <View style={[
+                styles.healthKitStatusBadge,
+                { backgroundColor: healthKitAuthorized
+                  ? (hasHealthData ? '#C6F6D5' : '#FEFCBF')
+                  : '#FED7D7'
+                },
+              ]}>
+                <Text style={[
+                  styles.healthKitStatusBadgeText,
+                  { color: healthKitAuthorized
+                    ? (hasHealthData ? '#276749' : '#975A16')
+                    : '#9B2C2C'
+                  },
+                ]}>
+                  {healthKitLoading ? '読込中...'
+                    : healthKitAuthorized
+                      ? (hasHealthData ? '接続済み' : 'データなし')
+                      : '未接続'
+                  }
+                </Text>
+              </View>
+            </View>
+            {healthKitAuthorized && hasHealthData && (
+              <View style={styles.healthKitStatusDetails}>
+                <Text style={styles.healthKitStatusDetail}>
+                  {(() => {
+                    const withHR = healthKitData.filter(d => d.avgHeartRate !== undefined);
+                    const withHRV = healthKitData.filter(d => d.avgHRV !== undefined);
+                    const withSleep = healthKitData.filter(d => d.sleepHours !== undefined);
+                    const withSteps = healthKitData.filter(d => d.steps !== undefined);
+                    const withCalories = healthKitData.filter(d => d.activeCalories !== undefined);
+                    const withExercise = healthKitData.filter(d => d.exerciseMinutes !== undefined);
+                    const withWorkouts = healthKitData.filter(d => d.workouts && d.workouts.length > 0);
+                    const parts: string[] = [];
+                    if (withHR.length > 0) parts.push(`心拍 ${withHR.length}日`);
+                    if (withHRV.length > 0) parts.push(`HRV ${withHRV.length}日`);
+                    if (withSleep.length > 0) parts.push(`睡眠 ${withSleep.length}日`);
+                    if (withSteps.length > 0) parts.push(`歩数 ${withSteps.length}日`);
+                    if (withCalories.length > 0) parts.push(`カロリー ${withCalories.length}日`);
+                    if (withExercise.length > 0) parts.push(`運動 ${withExercise.length}日`);
+                    if (withWorkouts.length > 0) parts.push(`ワークアウト ${withWorkouts.length}日`);
+                    return parts.join(' / ') || 'データ取得中...';
+                  })()}
+                </Text>
+              </View>
+            )}
+            {healthKitAuthorized && !hasHealthData && !healthKitLoading && (
+              <Text style={styles.healthKitStatusHint}>
+                Apple Watchまたはヘルスケアアプリにデータがあるか確認してください
+              </Text>
+            )}
+            {!healthKitAuthorized && (
+              <TouchableOpacity
+                style={styles.healthKitConnectButton}
+                onPress={requestHealthKitAuth}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.healthKitConnectButtonText}>ヘルスケアと連携する</Text>
+                <Ionicons name="chevron-forward" size={16} color="#805AD5" />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* 環境×身体 相関チャート */}
+        {envHealthHistory.length >= 0 && (
+          <View style={styles.chartContainer}>
+            <View style={styles.chartHeader}>
+              <Text style={styles.chartTitle}>環境 × 身体の相関（{envHealthHistory.length}日分）</Text>
+              <View style={styles.healthBadge}>
+                <Ionicons name="analytics" size={12} color="#4299E1" />
+                <Text style={styles.healthBadgeText}>自動記録</Text>
+              </View>
+            </View>
+
+            {/* 気圧変化 × 体調スコア */}
+            {(() => {
+              // envHealthHistoryにHealthKit・イベントデータを日付で結合
+              const envMap = new Map(envHealthHistory.map(r => [r.date, { ...r }]));
+
+              // HealthKitデータを結合
+              healthKitData.forEach(h => {
+                const existing = envMap.get(h.date);
+                if (existing) {
+                  if (h.sleepHours != null) existing.sleepHours = h.sleepHours;
+                  if (h.avgHRV != null) existing.avgHRV = h.avgHRV;
+                  if (h.avgHeartRate != null) existing.avgHeartRate = h.avgHeartRate;
+                  if (h.steps != null) existing.steps = h.steps;
+                }
+              });
+
+              // イベントのストレススコアを日別平均で結合
+              const stressByDate = new Map<string, number[]>();
+              savedClassifications.forEach(e => {
+                if (e.stressScore != null && e.eventStart) {
+                  const date = e.eventStart.split('T')[0];
+                  if (!stressByDate.has(date)) stressByDate.set(date, []);
+                  stressByDate.get(date)!.push(e.stressScore);
+                }
+              });
+
+              const merged = Array.from(envMap.values());
+
+              const pressureBodyPairs = merged.filter(r => r.bodyScore != null && r.pressureChange != null);
+              const pressureSleepPairs = merged.filter(r => r.sleepHours != null && r.pressureChange != null);
+              const pressureHRVPairs = merged.filter(r => r.avgHRV != null && r.pressureChange != null);
+              const humiditySleepPairs = merged.filter(r => r.sleepHours != null && r.humidity != null);
+
+              // 気圧 × ストレス（イベント日別平均）
+              const pressureStressPairs = merged
+                .filter(r => r.pressureChange != null && stressByDate.has(r.date))
+                .map(r => {
+                  const scores = stressByDate.get(r.date)!;
+                  return { x: r.pressureChange, y: scores.reduce((a, b) => a + b, 0) / scores.length, date: r.date };
+                });
+
+              const hasEnoughData = pressureBodyPairs.length >= 3 || pressureSleepPairs.length >= 3
+                || pressureHRVPairs.length >= 3 || humiditySleepPairs.length >= 3
+                || pressureStressPairs.length >= 3;
+
+              if (!hasEnoughData) {
+                return (
+                  <View style={styles.correlationEmpty}>
+                    <Text style={styles.correlationEmptyText}>
+                      現在{envHealthHistory.length}日分の環境データがあります{'\n'}
+                      データが増えると相関グラフが表示されます
+                    </Text>
+                  </View>
+                );
+              }
+
+              const chartW = SCREEN_WIDTH - 32 - 32 - 16;
+              const dotChartH = 100;
+
+              const renderScatterPlot = (
+                pairs: { x: number; y: number; date: string }[],
+                xLabel: string,
+                yLabel: string,
+                color: string,
+              ) => {
+                if (pairs.length < 3) return null;
+                const xMin = Math.min(...pairs.map(p => p.x));
+                const xMax = Math.max(...pairs.map(p => p.x));
+                const yMin = Math.min(...pairs.map(p => p.y));
+                const yMax = Math.max(...pairs.map(p => p.y));
+                const xRange = xMax - xMin || 1;
+                const yRange = yMax - yMin || 1;
+
+                // 相関係数計算
+                const n = pairs.length;
+                const sumX = pairs.reduce((s, p) => s + p.x, 0);
+                const sumY = pairs.reduce((s, p) => s + p.y, 0);
+                const sumXY = pairs.reduce((s, p) => s + p.x * p.y, 0);
+                const sumX2 = pairs.reduce((s, p) => s + p.x * p.x, 0);
+                const sumY2 = pairs.reduce((s, p) => s + p.y * p.y, 0);
+                const denom = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+                const r = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+
+                const rLabel = Math.abs(r) < 0.2 ? 'ほぼなし'
+                  : Math.abs(r) < 0.4 ? '弱い相関'
+                  : Math.abs(r) < 0.7 ? '中程度の相関'
+                  : '強い相関';
+                const direction = r > 0 ? '正' : '負';
+
+                return (
+                  <View style={styles.scatterSection}>
+                    <View style={styles.scatterHeader}>
+                      <Text style={styles.scatterTitle}>{xLabel} × {yLabel}</Text>
+                      <Text style={[styles.scatterCorrelation, { color }]}>
+                        r={r.toFixed(2)} ({direction}の{rLabel})
+                      </Text>
+                    </View>
+                    <View style={[styles.scatterPlot, { height: dotChartH, width: chartW }]}>
+                      {/* Y軸ラベル */}
+                      <Text style={[styles.scatterAxisLabel, { position: 'absolute', left: 0, top: 0 }]}>
+                        {yMax.toFixed(0)}
+                      </Text>
+                      <Text style={[styles.scatterAxisLabel, { position: 'absolute', left: 0, bottom: 0 }]}>
+                        {yMin.toFixed(0)}
+                      </Text>
+                      {/* X軸ラベル */}
+                      <Text style={[styles.scatterAxisLabel, { position: 'absolute', left: 24, bottom: -14 }]}>
+                        {xMin.toFixed(0)}
+                      </Text>
+                      <Text style={[styles.scatterAxisLabel, { position: 'absolute', right: 0, bottom: -14 }]}>
+                        {xMax.toFixed(0)}
+                      </Text>
+                      {/* ドット */}
+                      {pairs.map((p, i) => {
+                        const cx = 24 + ((p.x - xMin) / xRange) * (chartW - 32);
+                        const cy = dotChartH - ((p.y - yMin) / yRange) * (dotChartH - 8) - 4;
+                        return (
+                          <View
+                            key={i}
+                            style={[styles.scatterDot, {
+                              left: cx - 4,
+                              top: cy - 4,
+                              backgroundColor: color,
+                            }]}
+                          />
+                        );
+                      })}
+                    </View>
+                    <View style={styles.scatterXAxis}>
+                      <Text style={styles.scatterAxisTitle}>{xLabel}</Text>
+                    </View>
+                  </View>
+                );
+              };
+
+              return (
+                <View>
+                  {renderScatterPlot(
+                    pressureStressPairs,
+                    '気圧変化(hPa)',
+                    'ストレス平均',
+                    '#E53E3E',
+                  )}
+                  {renderScatterPlot(
+                    pressureSleepPairs.map(r => ({
+                      x: r.pressureChange,
+                      y: r.sleepHours!,
+                      date: r.date,
+                    })),
+                    '気圧変化(hPa)',
+                    '睡眠時間(h)',
+                    '#4299E1',
+                  )}
+                  {renderScatterPlot(
+                    pressureHRVPairs.map(r => ({
+                      x: r.pressureChange,
+                      y: r.avgHRV!,
+                      date: r.date,
+                    })),
+                    '気圧変化(hPa)',
+                    'HRV(ms)',
+                    '#48BB78',
+                  )}
+                  {renderScatterPlot(
+                    humiditySleepPairs.map(r => ({
+                      x: r.humidity,
+                      y: r.sleepHours!,
+                      date: r.date,
+                    })),
+                    '湿度(%)',
+                    '睡眠時間(h)',
+                    '#805AD5',
+                  )}
+                  {renderScatterPlot(
+                    pressureBodyPairs.map(r => ({
+                      x: r.pressureChange,
+                      y: r.bodyScore!,
+                      date: r.date,
+                    })),
+                    '気圧変化(hPa)',
+                    '体調スコア',
+                    '#ED8936',
+                  )}
+                </View>
+              );
+            })()}
+
+            {/* 個人プロファイルサマリー */}
+            {personalProfile && personalProfile.dataPoints >= 7 && (
+              <View style={styles.profileSummary}>
+                <Text style={styles.profileSummaryTitle}>あなたの環境感受性プロファイル</Text>
+                <View style={styles.profileRow}>
+                  <Text style={styles.profileLabel}>気圧感受性</Text>
+                  <View style={styles.profileBarBg}>
+                    <View style={[
+                      styles.profileBarFill,
+                      {
+                        width: `${Math.abs(personalProfile.pressureSensitivity) * 100}%`,
+                        backgroundColor: personalProfile.pressureSensitivity > 0.3 ? '#E53E3E'
+                          : personalProfile.pressureSensitivity > 0 ? '#ED8936' : '#48BB78',
+                      },
+                    ]} />
+                  </View>
+                  <Text style={styles.profileValue}>
+                    {personalProfile.pressureSensitivity > 0.3 ? '敏感'
+                      : personalProfile.pressureSensitivity > 0 ? 'やや敏感' : '鈍感'}
+                  </Text>
+                </View>
+                <View style={styles.profileRow}>
+                  <Text style={styles.profileLabel}>湿度感受性</Text>
+                  <View style={styles.profileBarBg}>
+                    <View style={[
+                      styles.profileBarFill,
+                      {
+                        width: `${Math.abs(personalProfile.humiditySensitivity) * 100}%`,
+                        backgroundColor: personalProfile.humiditySensitivity > 0.3 ? '#E53E3E'
+                          : personalProfile.humiditySensitivity > 0 ? '#ED8936' : '#48BB78',
+                      },
+                    ]} />
+                  </View>
+                  <Text style={styles.profileValue}>
+                    {personalProfile.humiditySensitivity > 0.3 ? '敏感'
+                      : personalProfile.humiditySensitivity > 0 ? 'やや敏感' : '鈍感'}
+                  </Text>
+                </View>
+                <Text style={styles.profileDataPoints}>
+                  {personalProfile.dataPoints}日分のデータから算出
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     );
   };
@@ -1286,12 +1726,13 @@ export default function AnalysisScreen() {
         })),
         sessions: sessions.map(s => ({
           date: s.timestamp,
-          beforeArousal: s.beforeArousal,
-          afterArousal: s.afterArousal ?? undefined,
+          beforeArousal: s.mind === '軽い' ? 1 : s.mind === '重い' ? 3 : 2,
+          afterArousal: undefined,
         })),
         totalDays: 30,
         chats: chatsForAnalysis,
         changeLogs: changeLogsForAnalysis,
+        healthKit: healthKitData.length > 0 ? healthKitData : undefined,
       });
       setAnalysisResult(result);
     } catch (error) {
@@ -1426,8 +1867,6 @@ export default function AnalysisScreen() {
    */
   const renderTabContent = () => {
     switch (activeTab) {
-      case 'check':
-        return renderCheckTab();
       case 'chart':
         return renderChartTab();
       case 'aiAnalysis':
@@ -2349,6 +2788,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderRadius: 16,
     padding: 16,
+    marginTop: 12,
   },
   chartHeader: {
     flexDirection: 'row',
@@ -2375,7 +2815,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     paddingRight: 4,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   yAxisLabel: {
     fontSize: 10,
@@ -2395,32 +2835,28 @@ const styles = StyleSheet.create({
   },
   expandedBarsContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
   },
   shrunkBarsContainer: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingBottom: 20,
   },
   stackedBar: {
     width: '100%',
     justifyContent: 'flex-end',
-    gap: 1,
   },
   barSegment: {
     width: '100%',
-    borderRadius: 3,
-    marginBottom: 1,
+    borderRadius: 1.5,
   },
   emptyBar: {
     width: '100%',
-    height: 4,
+    height: 2,
     backgroundColor: '#E2E8F0',
-    borderRadius: 2,
+    borderRadius: 1,
   },
   barWrapper: {
     alignItems: 'center',
+    justifyContent: 'flex-end',
   },
   barColumn: {
     width: '60%',
@@ -2449,8 +2885,6 @@ const styles = StyleSheet.create({
     fontSize: 7,
     color: '#A0AEC0',
     marginTop: 2,
-    position: 'absolute',
-    bottom: -14,
   },
   legend: {
     flexDirection: 'row',
@@ -3070,5 +3504,219 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // HealthKit チャート
+  healthBarWrapper: {
+    position: 'relative' as const,
+    height: '100%' as unknown as number,
+  },
+  healthDot: {
+    position: 'absolute' as const,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    alignSelf: 'center' as const,
+    left: '50%' as unknown as number,
+    marginLeft: -3,
+  },
+  shortSleepMarker: {
+    position: 'absolute' as const,
+    top: 0,
+    alignSelf: 'center' as const,
+    left: '50%' as unknown as number,
+    marginLeft: -4,
+  },
+  shortSleepText: {
+    fontSize: 8,
+    color: '#805AD5',
+    fontWeight: '700' as const,
+  },
+  yAxisRight: {
+    justifyContent: 'space-between' as const,
+    width: 24,
+    paddingLeft: 4,
+    paddingBottom: 12,
+  },
+  chartIconRow: {
+    flexDirection: 'row' as const,
+  },
+  chartMarkerIcon: {
+    fontSize: 7,
+    textAlign: 'center' as const,
+    height: 8,
+  },
+  healthBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#FFF5F5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 4,
+  },
+  healthBadgeText: {
+    fontSize: 10,
+    color: '#F56565',
+    fontWeight: '500' as const,
+  },
+  healthKitStatusCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 12,
+  },
+  healthKitStatusHeader: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+  },
+  healthKitStatusTitle: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: '#4A5568',
+    flex: 1,
+  },
+  healthKitStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  healthKitStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  healthKitStatusDetails: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EDF2F7',
+  },
+  healthKitStatusDetail: {
+    fontSize: 12,
+    color: '#718096',
+  },
+  healthKitStatusHint: {
+    fontSize: 11,
+    color: '#A0AEC0',
+    marginTop: 8,
+  },
+  healthKitConnectButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginTop: 10,
+    paddingVertical: 8,
+    backgroundColor: '#F7F3FF',
+    borderRadius: 8,
+    gap: 4,
+  },
+  healthKitConnectButtonText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: '#805AD5',
+  },
+  // 環境×身体 相関チャート
+  correlationEmpty: {
+    alignItems: 'center' as const,
+    paddingVertical: 20,
+    gap: 8,
+  },
+  correlationEmptyText: {
+    fontSize: 12,
+    color: '#A0AEC0',
+    textAlign: 'center' as const,
+    lineHeight: 18,
+  },
+  scatterSection: {
+    marginTop: 12,
+  },
+  scatterHeader: {
+    flexDirection: 'row' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    marginBottom: 6,
+  },
+  scatterTitle: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: '#4A5568',
+  },
+  scatterCorrelation: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+  },
+  scatterPlot: {
+    position: 'relative' as const,
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EDF2F7',
+  },
+  scatterDot: {
+    position: 'absolute' as const,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    opacity: 0.7,
+  },
+  scatterAxisLabel: {
+    fontSize: 9,
+    color: '#A0AEC0',
+  },
+  scatterXAxis: {
+    alignItems: 'center' as const,
+    marginTop: 2,
+  },
+  scatterAxisTitle: {
+    fontSize: 10,
+    color: '#A0AEC0',
+  },
+  // 個人プロファイル
+  profileSummary: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: 'rgba(66, 153, 225, 0.08)',
+    borderRadius: 10,
+  },
+  profileSummaryTitle: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: '#2D3748',
+    marginBottom: 10,
+  },
+  profileRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    marginBottom: 8,
+    gap: 8,
+  },
+  profileLabel: {
+    fontSize: 12,
+    color: '#4A5568',
+    width: 80,
+  },
+  profileBarBg: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#EDF2F7',
+    borderRadius: 4,
+    overflow: 'hidden' as const,
+  },
+  profileBarFill: {
+    height: '100%' as unknown as number,
+    borderRadius: 4,
+  },
+  profileValue: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: '#4A5568',
+    width: 50,
+    textAlign: 'right' as const,
+  },
+  profileDataPoints: {
+    fontSize: 10,
+    color: '#A0AEC0',
+    textAlign: 'right' as const,
+    marginTop: 4,
   },
 });

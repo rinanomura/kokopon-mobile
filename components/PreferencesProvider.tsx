@@ -7,6 +7,7 @@ import {
   AmbientSound,
   NotificationTime,
   DesignTheme,
+  BreathTiming,
   STORAGE_KEYS,
   DEFAULT_TRAINING_MODE,
   DEFAULT_VOICE,
@@ -14,6 +15,7 @@ import {
   DEFAULT_AMBIENT_SOUND,
   DEFAULT_NOTIFICATION_TIMES,
   DEFAULT_DESIGN_THEME,
+  DEFAULT_BREATH_TIMING,
 } from '@/hooks/usePreferences';
 
 // Context の型定義
@@ -38,6 +40,9 @@ type PreferencesContextType = {
   // デザインテーマ
   designTheme: DesignTheme;
   setDesignTheme: (theme: DesignTheme) => Promise<void>;
+  // 呼吸アニメーションタイミング
+  breathTiming: BreathTiming;
+  setBreathTiming: (timing: BreathTiming) => Promise<void>;
   // 読み込み完了フラグ
   isLoaded: boolean;
 };
@@ -60,19 +65,21 @@ export function PreferencesProvider({ children }: Props) {
   const [ambientSound, setAmbientSoundState] = useState<AmbientSound>(DEFAULT_AMBIENT_SOUND);
   const [notificationTimes, setNotificationTimesState] = useState<NotificationTime[]>(DEFAULT_NOTIFICATION_TIMES);
   const [designTheme, setDesignThemeState] = useState<DesignTheme>(DEFAULT_DESIGN_THEME);
+  const [breathTiming, setBreathTimingState] = useState<BreathTiming>(DEFAULT_BREATH_TIMING);
   const [isLoaded, setIsLoaded] = useState(false);
 
   // 初期化: AsyncStorage から読み込み
   useEffect(() => {
     const loadPreferences = async () => {
       try {
-        const [storedMode, storedVoice, storedGuideMode, storedAmbientSound, storedNotifTimes, storedDesignTheme] = await Promise.all([
+        const [storedMode, storedVoice, storedGuideMode, storedAmbientSound, storedNotifTimes, storedDesignTheme, storedBreathTiming] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.TRAINING_MODE),
           AsyncStorage.getItem(STORAGE_KEYS.VOICE),
           AsyncStorage.getItem(STORAGE_KEYS.GUIDE_MODE),
           AsyncStorage.getItem(STORAGE_KEYS.AMBIENT_SOUND),
           AsyncStorage.getItem(STORAGE_KEYS.NOTIFICATION_TIMES),
           AsyncStorage.getItem(STORAGE_KEYS.DESIGN_THEME),
+          AsyncStorage.getItem(STORAGE_KEYS.BREATH_TIMING),
         ]);
 
         if (storedMode === 'intuitive' || storedMode === 'verbal') {
@@ -99,6 +106,16 @@ export function PreferencesProvider({ children }: Props) {
         }
         if (storedDesignTheme === 'cute' || storedDesignTheme === 'simple') {
           setDesignThemeState(storedDesignTheme);
+        }
+        if (storedBreathTiming) {
+          try {
+            const parsed = JSON.parse(storedBreathTiming);
+            if (parsed.expandSec !== undefined) {
+              setBreathTimingState(parsed);
+            }
+          } catch {
+            console.log('呼吸タイミング設定のパースエラー');
+          }
         }
       } catch (error) {
         console.log('設定読み込みエラー:', error);
@@ -160,6 +177,16 @@ export function PreferencesProvider({ children }: Props) {
     }
   }, []);
 
+  // 呼吸タイミング変更
+  const setBreathTiming = useCallback(async (newTiming: BreathTiming) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.BREATH_TIMING, JSON.stringify(newTiming));
+      setBreathTimingState(newTiming);
+    } catch (error) {
+      console.log('呼吸タイミング保存エラー:', error);
+    }
+  }, []);
+
   // 通知時刻を保存するヘルパー
   const saveNotificationTimes = useCallback(async (times: NotificationTime[]) => {
     try {
@@ -216,6 +243,8 @@ export function PreferencesProvider({ children }: Props) {
         removeNotificationTime,
         designTheme,
         setDesignTheme,
+        breathTiming,
+        setBreathTiming,
         isLoaded,
       }}
     >

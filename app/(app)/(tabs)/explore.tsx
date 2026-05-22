@@ -36,21 +36,15 @@ export default function ExploreScreen() {
       const userId = await getUserId();
       const now = new Date().toISOString();
 
-      // ランダムな感情座標を生成
-      const beforeValence = Math.random() * 2 - 1;  // -1 〜 1
-      const beforeArousal = Math.random() * 2 - 1;  // -1 〜 1
-      const afterValence = Math.random() * 2 - 1;
-      const afterArousal = Math.random() * 2 - 1;
-
       const result = await createSessionLog({
         userId,
         timestamp: now,
-        beforeValence,
-        beforeArousal,
-        afterValence,
-        afterArousal,
+        body: ['軽い', 'ふつう', '重い'][Math.floor(Math.random() * 3)],
+        mind: ['軽い', 'ふつう', '重い'][Math.floor(Math.random() * 3)],
+        meditationMode: 'timer',
         meditationType: 'breathing',
-        duration: 30,
+        settingDuration: 60,
+        actualDuration: 60,
       });
 
       setMessage(`作成成功: ID=${result.id}`);
@@ -150,13 +144,10 @@ export default function ExploreScreen() {
                 <View key={log.id} style={styles.logItem}>
                   <Text style={styles.logId}>ID: {log.id.slice(0, 8)}...</Text>
                   <Text style={styles.logDetail}>
-                    Before: ({log.beforeValence.toFixed(2)}, {log.beforeArousal.toFixed(2)})
-                  </Text>
-                  <Text style={styles.logDetail}>
-                    After: ({log.afterValence?.toFixed(2) ?? '-'}, {log.afterArousal?.toFixed(2) ?? '-'})
+                    からだ: {log.body ?? '-'} / こころ: {log.mind ?? '-'}
                   </Text>
                   <Text style={styles.logTimestamp}>
-                    {log.meditationType} / {log.duration}秒
+                    {log.meditationMode} / {log.meditationType} / {log.settingDuration}秒
                   </Text>
                   <Text style={styles.logTimestamp}>
                     {new Date(log.timestamp).toLocaleString('ja-JP')}
